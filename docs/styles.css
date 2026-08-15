@@ -1,0 +1,282 @@
+:root {
+  --bg: #070b10;
+  --panel: #10161e;
+  --panel-2: #151d27;
+  --line: #243041;
+  --text: #e8eef6;
+  --muted: #8b9bb0;
+  --profit: #f43f5e;
+  --loss: #22c55e;
+  --accent: #38bdf8;
+  --warn: #fbbf24;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  min-height: 100vh;
+  background-image:
+    radial-gradient(1200px 500px at 10% -10%, rgba(56, 189, 248, 0.08), transparent 50%),
+    radial-gradient(900px 400px at 90% 0%, rgba(244, 63, 94, 0.06), transparent 45%);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.profit {
+  color: var(--profit);
+}
+
+.loss {
+  color: var(--loss);
+}
+
+.flat {
+  color: var(--muted);
+}
+
+.panel {
+  background: linear-gradient(180deg, rgba(21, 29, 39, 0.92), rgba(16, 22, 30, 0.92));
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cal-cell {
+  min-height: 86px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  border-radius: 10px;
+  padding: 8px;
+  text-align: left;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.cal-cell:hover:not(:disabled) {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.cal-cell.is-today {
+  outline: 1px solid rgba(56, 189, 248, 0.55);
+}
+
+.cal-cell.is-muted {
+  opacity: 0.38;
+}
+
+.cal-cell.has-trades {
+  cursor: pointer;
+}
+
+.strategy-chip {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+.strategy-chip.is-active,
+.side-chip.is-active,
+.page-nav-btn.is-active,
+.modal-tab.is-active {
+  border-color: rgba(56, 189, 248, 0.7);
+  color: #e0f2fe;
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.side-chip,
+.modal-tab {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+.week-total {
+  min-height: 86px;
+  border: 1px dashed rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.06);
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.modal-backdrop {
+  background: rgba(4, 8, 12, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.field {
+  border: 1px solid var(--line);
+  background: rgba(2, 6, 12, 0.6);
+  color: var(--text);
+}
+
+.field:focus {
+  outline: none;
+  border-color: rgba(56, 189, 248, 0.7);
+}
+
+.form-mode.is-edit {
+  color: #fde68a;
+  background: rgba(251, 191, 36, 0.12);
+}
+
+.psych-forms > form {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.psych-form-actions {
+  margin-top: auto;
+  padding-top: 0.5rem;
+}
+
+.psych-log-wrap {
+  max-height: 28rem;
+  overflow: auto;
+}
+
+.psych-log thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  box-shadow: 0 1px 0 var(--line);
+}
+
+.psych-log tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.kind-pill {
+  display: inline-block;
+  min-width: 2.25rem;
+}
+
+.kind-mind {
+  color: #7dd3fc;
+}
+
+.kind-beh {
+  color: #c4b5fd;
+}
+
+.kind-evt {
+  color: #fcd34d;
+}
+
+.th-sort {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.th-sort:hover {
+  color: var(--text);
+}
+
+.th-sort.is-asc::after {
+  content: " ▲";
+  font-size: 10px;
+}
+
+.th-sort.is-desc::after {
+  content: " ▼";
+  font-size: 10px;
+}
+
+.psych-log {
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.psych-log .col-time {
+  width: 11rem;
+}
+
+.psych-log .col-session {
+  width: 5.5rem;
+}
+
+.psych-log .col-kind {
+  width: 3.5rem;
+}
+
+.psych-log .col-status {
+  width: 32%;
+}
+
+.psych-log .col-note {
+  width: auto;
+}
+
+.psych-log .col-act {
+  width: 6.5rem;
+}
+
+.psych-log th,
+.psych-log td {
+  vertical-align: top;
+}
+
+.psych-log .cell-clip {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+#kpi-strip {
+  overflow: visible;
+}
+
+.kpi-hover {
+  position: relative;
+}
+
+.kpi-hover-pop {
+  position: absolute;
+  left: 12px;
+  bottom: calc(100% - 6px);
+  z-index: 40;
+  min-width: 9.5rem;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #0c1219;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
+}
+
+.kpi-hover:hover .kpi-hover-pop {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.kpi-hover-label {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.kpi-hover-amt {
+  margin: 4px 0 0;
+  font-size: 1.05rem;
+}

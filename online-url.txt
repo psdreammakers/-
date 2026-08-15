@@ -1,1 +1,2 @@
-# 線上網址（一鍵上架成功後會自動寫入）
+# 固定倉庫（你已上架的 GitHub）
+https://psdreammakers.github.io/-/
