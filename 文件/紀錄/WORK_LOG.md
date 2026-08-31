@@ -44,3 +44,6 @@
 - 精煉：心理戰 v1 訂版；連續入帳保留日期／時段／量表與類型；存檔不重繪曲線；表頭固定、列懸停；能量格不重繪 DOM
 - 新增：線下與上架分開。一鍵線下打開／線上打開／線上更新（複製到 published 再推 GitHub Pages）；線上修正不會自動發生
 - 修改：一鍵上架對準倉庫 `psdreammakers/-`；快照放 `docs/`，推 main 後由 GitHub Actions 發 Pages
+- 修改：Pages workflow 加上自動啟用，避免 configure-pages 找不到站台
+- 修改：說明與工作紀錄改放 `文件/`；訂版規則與一鍵啟動檔留在原位，線下／線上功能不變
+- 修改：訂版規則本體改放 `文件/規則/`；`.cursor/rules/` 只留捷徑，Cursor 仍自動套用

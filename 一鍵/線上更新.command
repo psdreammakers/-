@@ -1,5 +1,5 @@
 #!/bin/zsh
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 chmod +x tools/publish.sh
 ./tools/publish.sh
 echo ""

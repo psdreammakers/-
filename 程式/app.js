@@ -5,6 +5,10 @@
   const FORM_KEY = "goodsheet.form.v1";
   const PSYCH_KEY = "goodsheet.psych.v1";
   const PAGE_KEY = "goodsheet.page.v1";
+  // 2026-08-29 新增：交易紀錄只存在瀏覽器裡，清一次快取就全沒了。
+  // 這兩個常數記住「上次匯出備份是什麼時候」，超過天數就在最上面跳橫幅提醒。
+  const BACKUP_KEY = "goodsheet.lastbackup.v1";
+  const BACKUP_DAYS = 7;
   const DEFAULT_MIND_TAGS = ["睡不好", "趕時間", "想翻本", "怕錯過", "很穩", "心煩", "過勞"];
   const DEFAULT_BEH_TYPES = ["破規則", "停手", "加碼", "提前出場", "其他"];
   const DEFAULT_EVT_TYPES = ["重大消息", "跳空", "斷線", "會議", "資金異動", "生活事件", "其他"];
@@ -47,6 +51,7 @@
     calTitle: document.getElementById("cal-title"),
     rows: document.getElementById("trade-rows"),
     checkBanner: document.getElementById("check-banner"),
+    backupBanner: document.getElementById("backup-banner"),
     modal: document.getElementById("day-modal"),
     modalTitle: document.getElementById("modal-title"),
     modalSub: document.getElementById("modal-sub"),
@@ -935,6 +940,7 @@
     renderTable(list);
     updateNetPreview();
     renderPsych();
+    renderBackupBanner();
   }
 
   function upsertTrade(trade) {
@@ -995,6 +1001,60 @@
     render();
   }
 
+  // ── 備份提醒（2026-08-29 新增）────────────────────────────────
+  // 資料只在 localStorage，沒有伺服器。清快取／換瀏覽器／換電腦都會全空，
+  // 所以這裡盯著「上次匯出」的時間，太久沒備份就提醒，不改任何損益公式。
+  function lastBackupAt() {
+    const raw = localStorage.getItem(BACKUP_KEY);
+    if (!raw) return null;
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  function markBackedUp() {
+    try {
+      localStorage.setItem(BACKUP_KEY, new Date().toISOString());
+    } catch {
+      /* 無痕模式等寫不進去就算了，不擋匯出 */
+    }
+    renderBackupBanner();
+  }
+
+  function daysSinceBackup() {
+    const d = lastBackupAt();
+    if (!d) return null;
+    return Math.floor((Date.now() - d.getTime()) / 86400000);
+  }
+
+  function renderBackupBanner() {
+    const el = els.backupBanner;
+    if (!el) return;
+    if (!trades.length) {
+      el.classList.add("hidden");
+      return;
+    }
+    const days = daysSinceBackup();
+    if (days !== null && days < BACKUP_DAYS) {
+      el.classList.add("hidden");
+      return;
+    }
+    const why =
+      days === null
+        ? `這台電腦上<b>從來沒有匯出過備份</b>`
+        : `上次備份是 <b>${days} 天前</b>（${lastBackupAt().toLocaleDateString("zh-TW")}）`;
+    el.classList.remove("hidden");
+    el.innerHTML = `
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p class="text-amber-300 font-semibold">⚠ 該備份了</p>
+          <p class="mt-1 text-slate-300">${why}。目前 ${trades.length} 筆交易紀錄<b>只存在這個瀏覽器裡</b>——清快取、換瀏覽器或換電腦就會全部消失。</p>
+        </div>
+        <button type="button" id="btn-backup-now" class="rounded-lg bg-amber-400/90 px-3 py-2 text-sm font-semibold text-slate-950 whitespace-nowrap">立刻備份</button>
+      </div>`;
+    const btn = document.getElementById("btn-backup-now");
+    if (btn) btn.addEventListener("click", exportJson);
+  }
+
   function runDataCheck() {
     const nets = trades.map((t) => netOf(t));
     const sumNet = round2(nets.reduce((s, v) => s + v, 0));
@@ -1031,6 +1091,7 @@
       JSON.stringify({ version: 5, settings, trades, psych }, null, 2),
       "application/json"
     );
+    markBackedUp();
   }
 
   function csvEscape(v) {
@@ -1040,12 +1101,115 @@
   }
 
   function exportCsv() {
-    const header = ["id", "datetime", "account", "strategy", "side", "pnl", "fee", "notes"];
+    const header = ["日期", "時間", "帳戶", "策略", "方向", "平倉損益", "手續費", "淨損益", "收入", "支出", "備註", "交易ID"];
     const lines = [header.join(",")];
     for (const t of sorted(trades)) {
-      lines.push([t.id, t.datetime, t.account, t.strategy, t.side, t.pnl, t.fee, t.notes].map(csvEscape).join(","));
+      const { date, time } = splitStoredDatetime(t.datetime);
+      const net = netOf(t);
+      const income = net > 0 ? net : "";
+      const expense = net < 0 ? Math.abs(net) : "";
+      lines.push(
+        [date, time, t.account, t.strategy, sideLabel(t.side), t.pnl, t.fee, net, income, expense, t.notes, t.id]
+          .map(csvEscape)
+          .join(",")
+      );
     }
-    download(`goodsheet-${stamp()}.csv`, lines.join("\n"), "text/csv");
+    download(`goodsheet-記帳-${stamp()}.csv`, `\uFEFF${lines.join("\r\n")}`, "text/csv;charset=utf-8");
+    markBackedUp();
+  }
+
+  function psychWeekday(date) {
+    const day = new Date(`${date}T12:00:00`).getDay();
+    return Number.isNaN(day) ? "" : `星期${["日", "一", "二", "三", "四", "五", "六"][day]}`;
+  }
+
+  function psychDiaryRows() {
+    const rows = [];
+    for (const m of psych.mind) {
+      rows.push({
+        date: m.date || "",
+        time: m.time || "",
+        session: m.session ? sessionLabel(m.session) : "—",
+        kind: "心理",
+        subject: "狀態紀錄",
+        energy: m.energy ?? "",
+        mood: m.anxiety ?? "",
+        state: m.focus ?? "",
+        tags: (m.tags || []).join("、"),
+        note: m.note || "",
+        id: m.id || "",
+      });
+    }
+    for (const b of psych.behaviors) {
+      const { date, time } = splitStoredDatetime(b.datetime);
+      rows.push({
+        date,
+        time,
+        session: b.session ? sessionLabel(b.session) : "—",
+        kind: "行為",
+        subject: b.type || "",
+        energy: "",
+        mood: "",
+        state: "",
+        tags: "",
+        note: b.note || "",
+        id: b.id || "",
+      });
+    }
+    for (const e of psych.events || []) {
+      const { date, time } = splitStoredDatetime(e.datetime);
+      rows.push({
+        date,
+        time,
+        session: e.session ? sessionLabel(e.session) : "—",
+        kind: "事件",
+        subject: e.type || "",
+        energy: "",
+        mood: "",
+        state: "",
+        tags: "",
+        note: e.note || "",
+        id: e.id || "",
+      });
+    }
+    const kindRank = { "心理": 0, "行為": 1, "事件": 2 };
+    return rows.sort(
+      (a, b) =>
+        `${a.date}T${a.time || "00:00"}`.localeCompare(`${b.date}T${b.time || "00:00"}`) ||
+        (kindRank[a.kind] ?? 9) - (kindRank[b.kind] ?? 9) ||
+        String(a.id).localeCompare(String(b.id))
+    );
+  }
+
+  function exportPsychCsv() {
+    const rows = psychDiaryRows();
+    if (!rows.length) {
+      alert("目前沒有心理戰紀錄可下載。");
+      return;
+    }
+    const header = ["日期", "星期", "時間", "時段", "日記類型", "主題", "能量（1-5）", "心情（1-5）", "狀態（1-5）", "標籤", "日記內容", "紀錄ID"];
+    const lines = [header.join(",")];
+    for (const row of rows) {
+      lines.push(
+        [
+          row.date,
+          psychWeekday(row.date),
+          row.time,
+          row.session,
+          row.kind,
+          row.subject,
+          row.energy,
+          row.mood,
+          row.state,
+          row.tags,
+          row.note,
+          row.id,
+        ]
+          .map(csvEscape)
+          .join(",")
+      );
+    }
+    download(`goodsheet-心理日記-${stamp()}.csv`, `\uFEFF${lines.join("\r\n")}`, "text/csv;charset=utf-8");
   }
 
   function stamp() {
@@ -1082,6 +1246,67 @@
       rows.push(row);
     }
     return rows.filter((r) => r.some((c) => String(c).trim() !== ""));
+  }
+
+  function csvHeaderKey(value) {
+    const key = String(value ?? "").replace(/^\uFEFF/, "").trim().toLowerCase().replace(/\s+/g, "");
+    const aliases = {
+      "交易id": "id",
+      "交易編號": "id",
+      "日期時間": "datetime",
+      "交易日期時間": "datetime",
+      "日期": "date",
+      "時間": "time",
+      "帳戶": "account",
+      "策略": "strategy",
+      "分類": "strategy",
+      "方向": "side",
+      "多空": "side",
+      "平倉損益": "pnl",
+      "損益": "pnl",
+      realizedpnl: "pnl",
+      "手續費": "fee",
+      "淨損益": "net",
+      "收入": "income",
+      "支出": "expense",
+      "備註": "notes",
+    };
+    return aliases[key] || key;
+  }
+
+  function csvNumber(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return null;
+    const negative = /^\(.*\)$/.test(raw);
+    const normalized = raw
+      .replace(/^\(|\)$/g, "")
+      .replace(/[,\s]/g, "")
+      .replace(/nt\$|twd|[$＄元]/gi, "");
+    const number = Number(normalized);
+    if (!Number.isFinite(number)) return null;
+    return negative ? -Math.abs(number) : number;
+  }
+
+  function normalizeCsvRecord(raw) {
+    const item = { ...raw };
+    if (!item.datetime && item.date) item.datetime = `${item.date}T${item.time || "00:00"}`;
+
+    const fee = Math.abs(csvNumber(item.fee) ?? 0);
+    const pnl = csvNumber(item.pnl);
+    const net = csvNumber(item.net);
+    const income = csvNumber(item.income);
+    const expense = csvNumber(item.expense);
+    if (pnl !== null) item.pnl = pnl;
+    else if (net !== null) item.pnl = round2(net + fee);
+    else if (income !== null || expense !== null) item.pnl = round2((income || 0) - (expense || 0) + fee);
+    else return null;
+    item.fee = fee;
+
+    const side = String(item.side || "").trim().toLowerCase();
+    if (["多", "多單", "long"].includes(side)) item.side = "long";
+    else if (["空", "空單", "short"].includes(side)) item.side = "short";
+    else item.side = "";
+    return item;
   }
 
   function normalizeImported(raw) {
@@ -1187,14 +1412,15 @@
         const isCsv = file.name.toLowerCase().endsWith(".csv") || (!text.trim().startsWith("{") && !text.trim().startsWith("["));
         if (isCsv) {
           const rows = parseCsv(text);
-          const header = rows[0].map((h) => h.trim().toLowerCase());
+          if (rows.length < 2) throw new Error("CSV 沒有可匯入的交易資料。");
+          const header = rows[0].map(csvHeaderKey);
           const body = rows.slice(1).map((r) => {
             const o = {};
             header.forEach((h, i) => {
               o[h] = r[i];
             });
-            return o;
-          });
+            return normalizeCsvRecord(o);
+          }).filter(Boolean);
           importPayload(body);
         } else {
           const json = JSON.parse(text);
@@ -1550,6 +1776,7 @@
   document.getElementById("btn-check").addEventListener("click", runDataCheck);
   document.getElementById("btn-export-json").addEventListener("click", exportJson);
   document.getElementById("btn-export-csv").addEventListener("click", exportCsv);
+  document.getElementById("btn-export-psych-csv").addEventListener("click", exportPsychCsv);
   document.getElementById("import-file").addEventListener("change", (e) => {
     const file = e.target.files && e.target.files[0];
     if (file) handleImport(file);
@@ -2116,14 +2343,14 @@
   btnOnline.addEventListener("click", () => {
     const url = onlineUrl();
     if (!url) {
-      alert("還沒上架。請在資料夾雙擊「一鍵-線上更新.command」。");
+      alert("還沒上架。請到「一鍵」資料夾雙擊「線上更新.command」。");
       return;
     }
     window.open(url, "_blank", "noopener");
   });
   if (btnPublish) {
     btnPublish.addEventListener("click", () => {
-      alert("瀏覽器不能直接上架。請到專案資料夾雙擊「一鍵-線上更新.command」。");
+      alert("瀏覽器不能直接上架。請到「一鍵」資料夾雙擊「線上更新.command」。");
     });
   }
 

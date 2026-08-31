@@ -1,3 +1,3 @@
 #!/bin/zsh
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 open "index.html"

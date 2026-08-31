@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GoodSheet · 一鍵</title>
-  <link rel="stylesheet" href="styles.css" />
-  <script src="config.js"></script>
+  <link rel="stylesheet" href="../styles.css" />
+  <script src="../config.js"></script>
   <style>
     body { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
     .wrap { width: min(32rem, 100%); }
@@ -17,15 +17,15 @@
     <p class="text-xs tracking-[0.2em] text-sky-300/80">GOODSHEET</p>
     <h1 class="mt-2 text-xl font-semibold">一鍵</h1>
     <p class="mt-2 text-sm text-slate-400">線下是工作檔；線上是上次上架的快照。修正線下不會自動更新線上。</p>
-    <a class="go bg-sky-500 font-semibold text-slate-950" href="index.html">線下打開</a>
+    <a class="go bg-sky-500 font-semibold text-slate-950" href="../index.html">線下打開</a>
     <button type="button" id="go-online" class="go border border-slate-600 text-slate-100">線上打開</button>
-    <p class="mt-4 text-xs text-slate-500">線上更新請到資料夾雙擊「一鍵-線上更新.command」（瀏覽器不能直接上架）。第一次會請你登入 GitHub。</p>
+    <p class="mt-4 text-xs text-slate-500">線上更新請到「一鍵」資料夾雙擊「線上更新.command」（瀏覽器不能直接上架）。第一次會請你登入 GitHub。</p>
   </div>
   <script>
     document.getElementById("go-online").onclick = () => {
       const url = (window.GOODSHEET && window.GOODSHEET.onlineUrl) || "";
       if (!url) {
-        alert("還沒上架。請先雙擊「一鍵-線上更新.command」。");
+        alert("還沒上架。請先雙擊「一鍵/線上更新.command」。");
         return;
       }
       location.href = url;

@@ -35,7 +35,7 @@
         </div>
         <button id="btn-check" class="rounded-lg bg-amber-400/90 px-3 py-2 text-sm font-semibold text-slate-950">00 數據檢查</button>
         <button id="btn-export-json" class="rounded-lg border border-slate-600 px-3 py-2 text-sm">匯出 JSON</button>
-        <button id="btn-export-csv" class="rounded-lg border border-slate-600 px-3 py-2 text-sm">匯出 CSV</button>
+        <button id="btn-export-csv" class="rounded-lg border border-slate-600 px-3 py-2 text-sm">匯出記帳 CSV</button>
         <label class="rounded-lg border border-slate-600 px-3 py-2 text-sm cursor-pointer">
           匯入檔案
           <input id="import-file" type="file" accept=".json,.csv,application/json,text/csv" class="hidden" />
@@ -45,6 +45,8 @@
         <button type="button" id="btn-publish-online" class="hidden rounded-lg border border-sky-500/60 px-3 py-2 text-sm text-sky-200">線上更新</button>
       </div>
     </header>
+
+    <section id="backup-banner" class="hidden panel rounded-xl px-4 py-3 text-sm border border-amber-400/40"></section>
 
     <section id="check-banner" class="hidden panel rounded-xl px-4 py-3 text-sm"></section>
 
@@ -290,7 +292,10 @@
     <div id="page-psych" data-psych="v1" class="hidden space-y-5">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <p class="text-sm text-slate-400">心理看狀態、行為看自己、事件看外在。三本都不進入損益。</p>
-        <button type="button" id="btn-wipe-psych" class="rounded-lg border border-rose-500/50 px-3 py-1.5 text-xs text-rose-300">一鍵刪除三本</button>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" id="btn-export-psych-csv" class="rounded-lg border border-sky-500/60 px-3 py-1.5 text-xs text-sky-200">下載心理日記 CSV</button>
+          <button type="button" id="btn-wipe-psych" class="rounded-lg border border-rose-500/50 px-3 py-1.5 text-xs text-rose-300">一鍵刪除三本</button>
+        </div>
       </div>
       <p class="text-xs text-slate-500">今日篩選後淨損益 <span id="psych-today-pnl" class="num">—</span>（僅對照，不寫入心理帳）</p>
 
