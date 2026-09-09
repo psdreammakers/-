@@ -41,6 +41,34 @@
  * state.cards), so addScreenshot/removeScreenshot on a demo id simply find
  * nothing and report an error, exactly like editing any other demo field.
  *
+ *   -- settings mutation (ticket 14) --
+ *   store.addProduct(name)     -> { ok, errors? }
+ *   store.removeProduct(name)  -> { ok, errors? } (guarded: refuses if any real card uses it)
+ *   store.addSetup(name)       -> { ok, errors? }
+ *   store.removeSetup(name)    -> { ok, errors? } (guarded: refuses if any real card uses it)
+ *   store.addAccount({name, startingCapital}) -> { ok, account? , errors? }
+ *   store.removeAccount(id)    -> { ok, errors? } (guarded: refuses if in use, or if it's the last account)
+ *
+ *   -- 指揮中心 (ticket 14) --
+ *   store.createDefaultFilters() -> { accountId:"all", product:"all", setup:"all", dateFrom:null, dateTo:null }
+ *   store.getCommandCenterStats(filters) -> stats object, demo-aware (see below)
+ *
+ *     filters.accountId === "all"  -> { mode:"all", ...aggregate numbers..., currentEquity:null,
+ *                                        startingCapital:null, equityCurve:null }
+ *       "全部帳戶" has no such thing as a combined equity line across accounts with different
+ *       starting capital (hard rule) — currentEquity/startingCapital/equityCurve are null, not
+ *       fabricated, and mode:"all" says explicitly this is the aggregate view.
+ *
+ *     filters.accountId === <id>   -> { mode:"single", accountId, accountName, startingCapital,
+ *                                        currentEquity, ...same numbers..., equityCurve:{startEquity, points} }
+ *       equityCurve.points only advances on cards that pass the product/setup filters; when a
+ *       date range is given, equityCurve.startEquity = 初始資金 + net P&L of that account's
+ *       (product/setup-filtered) cards dated before the range start.
+ *
+ *     shared numeric fields on both shapes: count, netPnl (累積損益), winCount, lossCount,
+ *     breakEvenCount, winRate, avgWin, avgLoss, expectancy, profitFactor (賺賠比),
+ *     rewardRiskRatio (風報比), maxWin, maxLoss, totalFees, cards (the matching cards).
+ *
  * Design note: demo data is never written to storage. It is a constant that
  * getCards() returns only while getRealCards() is empty. The moment one real
  * card is saved, demo data is gone by construction — there is nothing to
@@ -107,6 +135,7 @@
       },
       cards: [],
       nextCardSeq: 1,
+      nextAccountSeq: 1,
     };
   }
 
@@ -209,6 +238,7 @@
           },
           cards: (parsed.cards && Array.isArray(parsed.cards)) ? parsed.cards : [],
           nextCardSeq: parsed.nextCardSeq || base.nextCardSeq,
+          nextAccountSeq: parsed.nextAccountSeq || base.nextAccountSeq,
         };
       } catch (e) {
         return defaultState();
@@ -370,6 +400,269 @@
       return { ok: true, card: deepClone(card) };
     }
 
+    // ---- settings mutation (ticket 14) --------------------------------
+    //
+    // Guard policy: add operations reject empty/duplicate names. Remove
+    // operations reject when the item is still referenced by a real (saved)
+    // card — this app has no cascading delete, so removing something in use
+    // would silently orphan existing cards' references. Demo cards are not
+    // considered "in use" since demo data isn't real and disappears the
+    // moment a real card is saved.
+
+    function addProduct(name) {
+      var trimmed = typeof name === "string" ? name.trim() : "";
+      if (!trimmed) return { ok: false, errors: ["商品：不能空白"] };
+      var state = getState();
+      if (state.settings.products.indexOf(trimmed) !== -1) {
+        return { ok: false, errors: ["商品：清單裡已經有這個"] };
+      }
+      state.settings.products.push(trimmed);
+      persist(state);
+      return { ok: true, products: state.settings.products.slice() };
+    }
+
+    function removeProduct(name) {
+      var state = getState();
+      var idx = state.settings.products.indexOf(name);
+      if (idx === -1) return { ok: false, errors: ["商品：清單裡沒有這個"] };
+      var inUse = state.cards.some(function (c) { return c.product === name; });
+      if (inUse) return { ok: false, errors: ["商品：已經有交易報告卡用這個商品，不能刪"] };
+      state.settings.products.splice(idx, 1);
+      persist(state);
+      return { ok: true, products: state.settings.products.slice() };
+    }
+
+    function addSetup(name) {
+      var trimmed = typeof name === "string" ? name.trim() : "";
+      if (!trimmed) return { ok: false, errors: ["setup 標：不能空白"] };
+      var state = getState();
+      if (state.settings.setups.indexOf(trimmed) !== -1) {
+        return { ok: false, errors: ["setup 標：清單裡已經有這個"] };
+      }
+      state.settings.setups.push(trimmed);
+      persist(state);
+      return { ok: true, setups: state.settings.setups.slice() };
+    }
+
+    function removeSetup(name) {
+      var state = getState();
+      var idx = state.settings.setups.indexOf(name);
+      if (idx === -1) return { ok: false, errors: ["setup 標：清單裡沒有這個"] };
+      var inUse = state.cards.some(function (c) { return c.setup === name; });
+      if (inUse) return { ok: false, errors: ["setup 標：已經有交易報告卡用這個標，不能刪"] };
+      state.settings.setups.splice(idx, 1);
+      persist(state);
+      return { ok: true, setups: state.settings.setups.slice() };
+    }
+
+    function addAccount(input) {
+      input = input || {};
+      var errors = [];
+      var name = typeof input.name === "string" ? input.name.trim() : "";
+      if (!name) errors.push("帳戶：名稱不能空白");
+
+      var state = getState();
+      if (name && state.settings.accounts.some(function (a) { return a.name === name; })) {
+        errors.push("帳戶：名稱已經在清單裡");
+      }
+
+      var startingCapital = input.startingCapital;
+      if (startingCapital === undefined || startingCapital === null || startingCapital === "") {
+        startingCapital = 0;
+      } else {
+        startingCapital = Number(startingCapital);
+      }
+      if (!isFiniteNumber(startingCapital) || startingCapital < 0) {
+        errors.push("初始資金：必須是 0 或正數");
+      }
+
+      if (errors.length > 0) return { ok: false, errors: errors };
+
+      var account = {
+        id: "acc-" + state.nextAccountSeq + "-" + Date.now(),
+        name: name,
+        startingCapital: startingCapital,
+      };
+      state.settings.accounts.push(account);
+      state.nextAccountSeq += 1;
+      persist(state);
+      return { ok: true, account: deepClone(account) };
+    }
+
+    function removeAccount(id) {
+      var state = getState();
+      var idx = -1;
+      for (var i = 0; i < state.settings.accounts.length; i++) {
+        if (state.settings.accounts[i].id === id) { idx = i; break; }
+      }
+      if (idx === -1) return { ok: false, errors: ["帳戶：清單裡沒有這個"] };
+      if (state.settings.accounts.length <= 1) {
+        return { ok: false, errors: ["帳戶：至少要留一戶"] };
+      }
+      var inUse = state.cards.some(function (c) { return c.accountId === id; });
+      if (inUse) return { ok: false, errors: ["帳戶：已經有交易報告卡用這戶，不能刪"] };
+      state.settings.accounts.splice(idx, 1);
+      persist(state);
+      return { ok: true, accounts: deepClone(state.settings.accounts) };
+    }
+
+    // ---- 指揮中心: filters + stats (ticket 14) -------------------------
+
+    function createDefaultFilters() {
+      return { accountId: "all", product: "all", setup: "all", dateFrom: null, dateTo: null };
+    }
+
+    function normalizeFilters(filters) {
+      filters = filters || {};
+      return {
+        accountId: filters.accountId || "all",
+        product: filters.product || "all",
+        setup: filters.setup || "all",
+        dateFrom: filters.dateFrom || null,
+        dateTo: filters.dateTo || null,
+      };
+    }
+
+    function matchesProductSetupDate(card, filters) {
+      if (filters.product !== "all" && card.product !== filters.product) return false;
+      if (filters.setup !== "all" && card.setup !== filters.setup) return false;
+      if (filters.dateFrom && card.dateET < filters.dateFrom) return false;
+      if (filters.dateTo && card.dateET > filters.dateTo) return false;
+      return true;
+    }
+
+    function chronoKey(card) {
+      return card.dateET + " " + card.timeET;
+    }
+
+    function sumOf(list) {
+      var total = 0;
+      for (var i = 0; i < list.length; i++) total += list[i];
+      return total;
+    }
+
+    // Shared number crunching over an already-filtered set of cards.
+    function computeCardStats(cards) {
+      var count = cards.length;
+      var netPnl = 0;
+      var totalFees = 0;
+      var winNet = [];
+      var lossNet = [];
+      var breakEvenCount = 0;
+
+      for (var i = 0; i < cards.length; i++) {
+        var c = cards[i];
+        var net = netPnlOf(c);
+        netPnl += net;
+        totalFees += typeof c.fee === "number" ? c.fee : 0;
+        if (net > 0) winNet.push(net);
+        else if (net < 0) lossNet.push(net);
+        else breakEvenCount++;
+      }
+
+      var winCount = winNet.length;
+      var lossCount = lossNet.length;
+      var totalWin = sumOf(winNet);
+      var totalLossAbs = Math.abs(sumOf(lossNet));
+      var avgWin = winCount > 0 ? totalWin / winCount : null;
+      var avgLoss = lossCount > 0 ? sumOf(lossNet) / lossCount : null; // negative, or null
+
+      var winRate = count > 0 ? winCount / count : null;
+      var expectancy = count > 0 ? netPnl / count : null;
+      var profitFactor = totalLossAbs > 0 ? totalWin / totalLossAbs : null; // 賺賠比
+      var rewardRiskRatio = (avgWin !== null && avgLoss !== null && avgLoss !== 0)
+        ? avgWin / Math.abs(avgLoss)
+        : null; // 風報比
+      var maxWin = winCount > 0 ? Math.max.apply(null, winNet) : null;
+      var maxLoss = lossCount > 0 ? Math.min.apply(null, lossNet) : null;
+
+      return {
+        count: count,
+        netPnl: netPnl,
+        winCount: winCount,
+        lossCount: lossCount,
+        breakEvenCount: breakEvenCount,
+        winRate: winRate,
+        avgWin: avgWin,
+        avgLoss: avgLoss,
+        expectancy: expectancy,
+        profitFactor: profitFactor,
+        rewardRiskRatio: rewardRiskRatio,
+        maxWin: maxWin,
+        maxLoss: maxLoss,
+        totalFees: totalFees,
+      };
+    }
+
+    function getCommandCenterStats(rawFilters) {
+      var filters = normalizeFilters(rawFilters);
+      var allCards = getCards(); // demo-aware, same set the rest of the UI sees
+
+      if (filters.accountId === "all") {
+        var matched = allCards.filter(function (c) { return matchesProductSetupDate(c, filters); });
+        var stats = computeCardStats(matched);
+        stats.mode = "all";
+        stats.accountId = "all";
+        stats.accountName = "全部帳戶";
+        // Hard rule: no combined equity concept across accounts with
+        // different starting capital. These are null, not fabricated.
+        stats.startingCapital = null;
+        stats.currentEquity = null;
+        stats.equityCurve = null;
+        stats.cards = matched;
+        return stats;
+      }
+
+      var accounts = getAccounts();
+      var account = accounts.filter(function (a) { return a.id === filters.accountId; })[0];
+      if (!account) {
+        // Defensive: filters referencing a since-removed account. Since
+        // removeAccount() refuses removal while cards reference it, this
+        // can only happen with a stale UI selection — treat as an empty
+        // single-account view rather than throwing.
+        account = { id: filters.accountId, name: filters.accountId, startingCapital: 0 };
+      }
+
+      // Product/setup filtered, but NOT date filtered yet — the date range
+      // only trims which points are *shown*; cards before it are folded
+      // into the starting equity instead of being dropped from the count.
+      var accountFiltered = allCards.filter(function (c) {
+        return c.accountId === account.id &&
+          (filters.product === "all" || c.product === filters.product) &&
+          (filters.setup === "all" || c.setup === filters.setup);
+      });
+      accountFiltered.sort(function (a, b) { return chronoKey(a) < chronoKey(b) ? -1 : chronoKey(a) > chronoKey(b) ? 1 : 0; });
+
+      var preRangeNet = 0;
+      var inRange = [];
+      for (var i = 0; i < accountFiltered.length; i++) {
+        var c = accountFiltered[i];
+        if (filters.dateFrom && c.dateET < filters.dateFrom) {
+          preRangeNet += netPnlOf(c);
+          continue;
+        }
+        if (filters.dateTo && c.dateET > filters.dateTo) continue; // after range: excluded entirely
+        inRange.push(c);
+      }
+
+      var startEquity = account.startingCapital + preRangeNet;
+      var running = startEquity;
+      var points = inRange.map(function (c) {
+        running += netPnlOf(c);
+        return { cardId: c.id, dateET: c.dateET, timeET: c.timeET, pnl: netPnlOf(c), equity: running };
+      });
+
+      var singleStats = computeCardStats(inRange);
+      singleStats.mode = "single";
+      singleStats.accountId = account.id;
+      singleStats.accountName = account.name;
+      singleStats.startingCapital = account.startingCapital;
+      singleStats.currentEquity = points.length > 0 ? points[points.length - 1].equity : startEquity;
+      singleStats.equityCurve = { startEquity: startEquity, points: points };
+      singleStats.cards = inRange;
+      return singleStats;
+    }
+
     return {
       getSettings: getSettings,
       getProducts: getProducts,
@@ -386,6 +679,14 @@
       getRealSummary: getRealSummary,
       addScreenshot: addScreenshot,
       removeScreenshot: removeScreenshot,
+      addProduct: addProduct,
+      removeProduct: removeProduct,
+      addSetup: addSetup,
+      removeSetup: removeSetup,
+      addAccount: addAccount,
+      removeAccount: removeAccount,
+      createDefaultFilters: createDefaultFilters,
+      getCommandCenterStats: getCommandCenterStats,
     };
   }
 
