@@ -13,6 +13,8 @@
     tab: "cmd", // "cmd" | "psych"
     formOpen: false,
     formErrors: [],
+    openCardId: null, // set when a trade report card's detail view is open
+    detailErrors: [],
   };
 
   var app = document.getElementById("app");
@@ -74,7 +76,7 @@
     var rows = sorted
       .map(function (c) {
         return (
-          '<tr class="clickable' + (c.isDemo ? " demo-row" : "") + '">' +
+          '<tr class="clickable' + (c.isDemo ? " demo-row" : "") + '" data-card-id="' + escapeHtml(c.id) + '">' +
           "<td>" + escapeHtml(c.dateET) + " " + escapeHtml(c.timeET) + "</td>" +
           "<td>" + escapeHtml(c.product) + "</td>" +
           "<td>" + escapeHtml(c.setup) + "</td>" +
@@ -198,6 +200,108 @@
     };
   }
 
+  // ---- card detail view (open one trade report card, incl. screenshots) --
+  //
+  // Screenshots render ONLY here — never as thumbnails in the 指揮中心 list
+  // above, and never in any per-day list. This is also the only place a
+  // screenshot can be attached or removed (a card is created with 0 via the
+  // form above; screenshots are a property of an opened card).
+
+  var MAX_SCREENSHOTS = window.TradingJournal.MAX_SCREENSHOTS;
+
+  function renderCardDetail(cardId) {
+    var card = store.getCardById(cardId);
+    if (!card) return "";
+
+    var accounts = store.getAccounts();
+    var screenshots = card.screenshots || [];
+
+    var errorsHtml = state.detailErrors.length
+      ? '<div class="form-errors"><b>這張圖存不進去：</b><ul>' +
+        state.detailErrors.map(function (e) { return "<li>" + escapeHtml(e) + "</li>"; }).join("") +
+        "</ul></div>"
+      : "";
+
+    function field(label, value) {
+      return '<div class="detail-field"><div class="l">' + escapeHtml(label) + '</div><div class="v">' + value + "</div></div>";
+    }
+
+    var fieldsHtml =
+      '<div class="detail-grid">' +
+      field("商品", escapeHtml(card.product)) +
+      field("setup 標", escapeHtml(card.setup)) +
+      field("帳戶", escapeHtml(accountName(card.accountId, accounts))) +
+      field("方向", escapeHtml(card.side)) +
+      field("口數", String(card.size)) +
+      field("成績", escapeHtml(card.grade)) +
+      field("執行評等", escapeHtml(card.execGrade)) +
+      field("美東日期", escapeHtml(card.dateET) + " " + escapeHtml(card.timeET)) +
+      field("平倉損益", money(card.pnl)) +
+      field("手續費", card.fee === null ? "—" : String(card.fee)) +
+      field("淨損益", money(store.netPnlOf(card))) +
+      field("進場價", card.entryPrice === null ? "—" : String(card.entryPrice)) +
+      field("出場價", card.exitPrice === null ? "—" : String(card.exitPrice)) +
+      field("停損", card.stopPrice === null ? "—" : String(card.stopPrice)) +
+      field("計畫風險", card.plannedRisk === null ? "—" : String(card.plannedRisk)) +
+      field("進場理由", escapeHtml(card.entryReason) || "—") +
+      field("出場理由", escapeHtml(card.exitReason) || "—") +
+      field("教訓", escapeHtml(card.lesson) || "—") +
+      "</div>";
+
+    var shotsHtml = screenshots.length
+      ? '<div class="shots">' +
+        screenshots
+          .map(function (src, i) {
+            return (
+              '<div class="shot">' +
+              '<img src="' + escapeHtml(src) + '" alt="截圖 ' + (i + 1) + '">' +
+              (card.isDemo ? "" : '<button type="button" class="shot-remove" data-remove-shot="' + i + '">移除</button>') +
+              "</div>"
+            );
+          })
+          .join("") +
+        "</div>"
+      : '<p class="muted">還沒有貼圖</p>';
+
+    var addHtml = "";
+    if (card.isDemo) {
+      addHtml = '<p class="muted">示範資料不可貼圖。</p>';
+    } else if (screenshots.length >= MAX_SCREENSHOTS) {
+      addHtml = '<p class="muted">已經 ' + MAX_SCREENSHOTS + ' 張，這筆貼滿了。</p>';
+    } else {
+      addHtml =
+        '<div class="paste-zone" id="paste-zone" tabindex="0">' +
+        "點這裡按 Ctrl+V 貼上截圖，或選擇檔案上傳（還可以貼 " + (MAX_SCREENSHOTS - screenshots.length) + " 張）" +
+        '<input type="file" id="shot-file-input" accept="image/*" style="display:block;margin-top:8px">' +
+        "</div>";
+    }
+
+    return (
+      '<div class="overlay" id="detail-overlay">' +
+      '<div class="sheet">' +
+      "<h2>交易報告卡" + (card.isDemo ? "（示範）" : "") + "</h2>" +
+      errorsHtml +
+      fieldsHtml +
+      '<h3 style="margin-top:16px">截圖</h3>' +
+      shotsHtml +
+      addHtml +
+      '<p class="row" style="margin-top:14px">' +
+      '<button type="button" class="ghost" id="close-detail-btn">關閉</button>' +
+      "</p>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function readImageFile(file, onDataUrl) {
+    if (!file || !window.FileReader) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      onDataUrl(String(reader.result));
+    };
+    reader.readAsDataURL(file);
+  }
+
   // ---- psychology stub -------------------------------------------------
 
   function renderPsych() {
@@ -222,7 +326,7 @@
       "</div>";
 
     var body = state.tab === "cmd" ? renderCommandCenter() : renderPsych();
-    var overlay = state.formOpen ? renderForm() : "";
+    var overlay = state.formOpen ? renderForm() : state.openCardId ? renderCardDetail(state.openCardId) : "";
 
     app.innerHTML = topbar + '<div class="col">' + body + "</div>" + overlay;
     wire();
@@ -243,6 +347,81 @@
       newBtn.addEventListener("click", function () {
         state.formOpen = true;
         state.formErrors = [];
+        state.openCardId = null;
+        render();
+      });
+    }
+
+    var cardRows = app.querySelectorAll("tr[data-card-id]");
+    for (var r = 0; r < cardRows.length; r++) {
+      cardRows[r].addEventListener("click", function (e) {
+        state.openCardId = e.currentTarget.getAttribute("data-card-id");
+        state.detailErrors = [];
+        state.formOpen = false;
+        render();
+      });
+    }
+
+    var closeDetailBtn = document.getElementById("close-detail-btn");
+    if (closeDetailBtn) {
+      closeDetailBtn.addEventListener("click", function () {
+        state.openCardId = null;
+        state.detailErrors = [];
+        render();
+      });
+    }
+
+    function attachScreenshot(cardId, dataUrl) {
+      var result = store.addScreenshot(cardId, dataUrl);
+      if (!result.ok) {
+        state.detailErrors = result.errors;
+      } else {
+        state.detailErrors = [];
+      }
+      render();
+    }
+
+    var shotFileInput = document.getElementById("shot-file-input");
+    if (shotFileInput) {
+      shotFileInput.addEventListener("change", function (e) {
+        var file = e.target.files && e.target.files[0];
+        var cardId = state.openCardId;
+        readImageFile(file, function (dataUrl) {
+          attachScreenshot(cardId, dataUrl);
+        });
+      });
+    }
+
+    var pasteZone = document.getElementById("paste-zone");
+    if (pasteZone) {
+      pasteZone.addEventListener("paste", function (e) {
+        var items = (e.clipboardData && e.clipboardData.items) || [];
+        var cardId = state.openCardId;
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].type && items[i].type.indexOf("image/") === 0) {
+            var file = items[i].getAsFile();
+            if (file) {
+              e.preventDefault();
+              readImageFile(file, function (dataUrl) {
+                attachScreenshot(cardId, dataUrl);
+              });
+            }
+            break;
+          }
+        }
+      });
+    }
+
+    var removeShotBtns = app.querySelectorAll("[data-remove-shot]");
+    for (var s = 0; s < removeShotBtns.length; s++) {
+      removeShotBtns[s].addEventListener("click", function (e) {
+        var index = parseInt(e.currentTarget.getAttribute("data-remove-shot"), 10);
+        var result = store.removeScreenshot(state.openCardId, index);
+        if (!result.ok) {
+          state.detailErrors = result.errors;
+        } else {
+          state.detailErrors = [];
+        }
         render();
       });
     }

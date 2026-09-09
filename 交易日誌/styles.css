@@ -244,3 +244,69 @@ tr.demo-row {
   margin: 4px 0 0;
   padding-left: 18px;
 }
+
+tr.clickable {
+  cursor: pointer;
+}
+
+tr.clickable:hover {
+  background: rgba(125, 211, 252, 0.08);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+.detail-field .l {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.detail-field .v {
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.shot {
+  width: 140px;
+}
+
+.shot img {
+  width: 100%;
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.shot-remove {
+  width: 100%;
+  margin-top: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.paste-zone {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  outline: none;
+}
+
+.paste-zone:focus {
+  border-color: var(--sky);
+}

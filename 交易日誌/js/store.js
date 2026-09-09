@@ -25,6 +25,21 @@
  *   store.netPnlOf(card)       -> number (平倉損益 − 手續費, missing fee = 0)
  *   store.getSummary()         -> { count, netPnl } over getCards() (demo-aware, what the UI shows)
  *   store.getRealSummary()     -> { count, netPnl } over getRealCards() only (never counts demo)
+ *   store.getCardById(id)      -> card (real or demo) | null — for opening one card's detail view
+ *   store.addScreenshot(id, dataUri)    -> { ok:true, card } | { ok:false, errors:string[] }
+ *   store.removeScreenshot(id, index)   -> { ok:true, card } | { ok:false, errors:string[] }
+ *
+ * Screenshots (ticket 18): a card holds 0–3 screenshots (data URIs / opaque
+ * strings — the store never looks inside them). They are attached one at a
+ * time via addScreenshot after the card already exists ("打開報告卡才看得到
+ * 圖" — screenshots are a property of an opened card, not a create-form
+ * field). The 4th attempt is rejected here, in the store, not just the UI —
+ * same seam tests hit as ticket 13's required-field validation. Screenshots
+ * are ordinary bytes living in this same storage backend (localStorage in
+ * the browser, in-memory in tests) — no upload, no network, nothing written
+ * to the git repo. Demo cards are read-only (they live in a constant, not in
+ * state.cards), so addScreenshot/removeScreenshot on a demo id simply find
+ * nothing and report an error, exactly like editing any other demo field.
  *
  * Design note: demo data is never written to storage. It is a constant that
  * getCards() returns only while getRealCards() is empty. The moment one real
@@ -44,6 +59,7 @@
 
   var GRADES = ["A", "B", "C", "D", "E", "F"];
   var SIDES = ["多", "空"];
+  var MAX_SCREENSHOTS = 3;
 
   var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
   var TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -119,12 +135,12 @@
   // ---- demo data (never persisted; see module doc above) --------------
 
   var DEMO_CARDS = [
-    { id: "demo-1", isDemo: true, product: "MNQ", setup: "突破", accountId: "acc-main", grade: "B", execGrade: "B", side: "多", size: 2, pnl: 240, fee: 4.5, dateET: "2026-09-08", timeET: "09:42", entryPrice: null, exitPrice: null, stopPrice: null, plannedRisk: null, entryReason: null, exitReason: null, lesson: null },
-    { id: "demo-2", isDemo: true, product: "MNQ", setup: "回歸", accountId: "acc-main", grade: "D", execGrade: "C", side: "空", size: 1, pnl: -80, fee: 2.25, dateET: "2026-09-08", timeET: "15:12", entryPrice: null, exitPrice: null, stopPrice: null, plannedRisk: null, entryReason: null, exitReason: null, lesson: null },
-    { id: "demo-3", isDemo: true, product: "MES", setup: "開盤區間", accountId: "acc-main", grade: "A", execGrade: "A", side: "多", size: 3, pnl: 120, fee: null, dateET: "2026-09-10", timeET: "10:05", entryPrice: null, exitPrice: null, stopPrice: null, plannedRisk: null, entryReason: null, exitReason: null, lesson: null },
-    { id: "demo-4", isDemo: true, product: "MNQ", setup: "突破", accountId: "acc-main", grade: "A", execGrade: "B", side: "多", size: 2, pnl: 200, fee: 4.5, dateET: "2026-09-15", timeET: "09:35", entryPrice: null, exitPrice: null, stopPrice: null, plannedRisk: null, entryReason: null, exitReason: null, lesson: null },
-    { id: "demo-5", isDemo: true, product: "MES", setup: "回歸", accountId: "acc-main", grade: "D", execGrade: "D", side: "空", size: 2, pnl: -120, fee: 3, dateET: "2026-09-16", timeET: "15:40", entryPrice: null, exitPrice: null, stopPrice: null, plannedRisk: null, entryReason: null, exitReason: null, lesson: null },
-    { id: "demo-6", isDemo: true, product: "MNQ", setup: "開盤區間", accountId: "acc-main", grade: "C", execGrade: "B", side: "多", size: 1, pnl: 50, fee: null, dateET: "2026-09-18", timeET: "10:02", entryPrice: null, exitPrice: null, stopPrice: null, plannedRisk: null, entryReason: null, exitReason: null, lesson: null },
+    { id: "demo-1", isDemo: true, product: "MNQ", setup: "突破", accountId: "acc-main", grade: "B", execGrade: "B", side: "多", size: 2, pnl: 240, fee: 4.5, dateET: "2026-09-08", timeET: "09:42", entryPrice: null, exitPrice: null, stopPrice: null, plannedRisk: null, entryReason: null, exitReason: null, lesson: null, screenshots: [] },
+    { id: "demo-2", isDemo: true, product: "MNQ", setup: "回歸", accountId: "acc-main", grade: "D", execGrade: "C", side: "空", size: 1, pnl: -80, fee: 2.25, dateET: "2026-09-08", timeET: "15:12", entryPrice: null, exitPrice: null, stopPrice: null, plannedRisk: null, entryReason: null, exitReason: null, lesson: null, screenshots: [] },
+    { id: "demo-3", isDemo: true, product: "MES", setup: "開盤區間", accountId: "acc-main", grade: "A", execGrade: "A", side: "多", size: 3, pnl: 120, fee: null, dateET: "2026-09-10", timeET: "10:05", entryPrice: null, exitPrice: null, stopPrice: null, plannedRisk: null, entryReason: null, exitReason: null, lesson: null, screenshots: [] },
+    { id: "demo-4", isDemo: true, product: "MNQ", setup: "突破", accountId: "acc-main", grade: "A", execGrade: "B", side: "多", size: 2, pnl: 200, fee: 4.5, dateET: "2026-09-15", timeET: "09:35", entryPrice: null, exitPrice: null, stopPrice: null, plannedRisk: null, entryReason: null, exitReason: null, lesson: null, screenshots: [] },
+    { id: "demo-5", isDemo: true, product: "MES", setup: "回歸", accountId: "acc-main", grade: "D", execGrade: "D", side: "空", size: 2, pnl: -120, fee: 3, dateET: "2026-09-16", timeET: "15:40", entryPrice: null, exitPrice: null, stopPrice: null, plannedRisk: null, entryReason: null, exitReason: null, lesson: null, screenshots: [] },
+    { id: "demo-6", isDemo: true, product: "MNQ", setup: "開盤區間", accountId: "acc-main", grade: "C", execGrade: "B", side: "多", size: 1, pnl: 50, fee: null, dateET: "2026-09-18", timeET: "10:02", entryPrice: null, exitPrice: null, stopPrice: null, plannedRisk: null, entryReason: null, exitReason: null, lesson: null, screenshots: [] },
   ];
 
   // ---- validation --------------------------------------------------
@@ -288,12 +304,69 @@
         entryReason: toNullableLine(input.entryReason),
         exitReason: toNullableLine(input.exitReason),
         lesson: toNullableLine(input.lesson),
+        screenshots: [],
       };
 
       state.cards.push(card);
       state.nextCardSeq += 1;
       persist(state);
 
+      return { ok: true, card: deepClone(card) };
+    }
+
+    function findRealCardIndex(state, cardId) {
+      for (var i = 0; i < state.cards.length; i++) {
+        if (state.cards[i].id === cardId) return i;
+      }
+      return -1;
+    }
+
+    function getCardById(id) {
+      var cards = getCards();
+      for (var i = 0; i < cards.length; i++) {
+        if (cards[i].id === id) return cards[i];
+      }
+      return null;
+    }
+
+    // A card holds 0–MAX_SCREENSHOTS screenshots, attached one at a time to
+    // an already-saved card (screenshots are only ever seen/managed on an
+    // opened card, never on the create form). This is the seam that rejects
+    // a 4th screenshot — enforced here, not just in whatever UI calls it.
+    function addScreenshot(cardId, dataUri) {
+      var state = getState();
+      var idx = findRealCardIndex(state, cardId);
+      if (idx === -1) {
+        // Covers both "no such card" and "this is demo data" — demo cards
+        // live in the DEMO_CARDS constant, never in state.cards, so they
+        // are read-only by construction, same as every other demo field.
+        return { ok: false, errors: ["找不到這筆交易報告卡（示範資料不可貼圖）"] };
+      }
+      if (typeof dataUri !== "string" || dataUri.trim() === "") {
+        return { ok: false, errors: ["截圖：必須是有效的圖片資料"] };
+      }
+      var card = state.cards[idx];
+      if (!Array.isArray(card.screenshots)) card.screenshots = [];
+      if (card.screenshots.length >= MAX_SCREENSHOTS) {
+        return { ok: false, errors: ["截圖：一筆最多 " + MAX_SCREENSHOTS + " 張，這張存不進去"] };
+      }
+      card.screenshots.push(dataUri);
+      persist(state);
+      return { ok: true, card: deepClone(card) };
+    }
+
+    function removeScreenshot(cardId, index) {
+      var state = getState();
+      var idx = findRealCardIndex(state, cardId);
+      if (idx === -1) {
+        return { ok: false, errors: ["找不到這筆交易報告卡"] };
+      }
+      var card = state.cards[idx];
+      if (!Array.isArray(card.screenshots) || index < 0 || index >= card.screenshots.length) {
+        return { ok: false, errors: ["截圖：索引超出範圍"] };
+      }
+      card.screenshots.splice(index, 1);
+      persist(state);
       return { ok: true, card: deepClone(card) };
     }
 
@@ -307,9 +380,12 @@
       hasRealCards: hasRealCards,
       isDemoActive: isDemoActive,
       getCards: getCards,
+      getCardById: getCardById,
       netPnlOf: netPnlOf,
       getSummary: getSummary,
       getRealSummary: getRealSummary,
+      addScreenshot: addScreenshot,
+      removeScreenshot: removeScreenshot,
     };
   }
 
@@ -325,5 +401,6 @@
     GRADES: GRADES,
     SIDES: SIDES,
     DEMO_CARDS: DEMO_CARDS,
+    MAX_SCREENSHOTS: MAX_SCREENSHOTS,
   };
 });
