@@ -13,6 +13,9 @@
     tab: "cmd", // "cmd" | "psych"
     formOpen: false,
     formErrors: [],
+    filters: store.createDefaultFilters(),
+    settingsOpen: false,
+    settingsErrors: [],
   };
 
   var app = document.getElementById("app");
@@ -23,6 +26,17 @@
     var sign = rounded > 0 ? "+" : "";
     var cls = rounded > 0 ? "profit" : rounded < 0 ? "loss" : "";
     return '<span class="' + cls + '">' + sign + rounded.toLocaleString("en-US") + "</span>";
+  }
+
+  // number that isn't a dollar amount (ratios, counts) — no +/- coloring
+  function num(n, decimals) {
+    if (n === null || n === undefined || isNaN(n)) return "—";
+    return n.toFixed(decimals === undefined ? 2 : decimals);
+  }
+
+  function pct(n) {
+    if (n === null || n === undefined || isNaN(n)) return "—";
+    return (n * 100).toFixed(1) + "%";
   }
 
   function escapeHtml(s) {
@@ -49,27 +63,118 @@
 
   // ---- command center -----------------------------------------------
 
+  function renderFilterBar() {
+    var accounts = store.getAccounts();
+    var products = store.getProducts();
+    var setups = store.getSetups();
+    var f = state.filters;
+
+    var accountOptions =
+      '<option value="all"' + (f.accountId === "all" ? " selected" : "") + ">全部帳戶</option>" +
+      accounts.map(function (a) {
+        return '<option value="' + escapeHtml(a.id) + '"' + (a.id === f.accountId ? " selected" : "") + ">" + escapeHtml(a.name) + "</option>";
+      }).join("");
+
+    var productOptions =
+      '<option value="all"' + (f.product === "all" ? " selected" : "") + ">全部商品</option>" +
+      optionsHtml(products, f.product === "all" ? undefined : f.product);
+
+    var setupOptions =
+      '<option value="all"' + (f.setup === "all" ? " selected" : "") + ">全部 setup</option>" +
+      optionsHtml(setups, f.setup === "all" ? undefined : f.setup);
+
+    return (
+      '<div class="panel">' +
+      '<div class="row">' +
+      '<label class="filter-field">帳戶<select id="filter-account">' + accountOptions + "</select></label>" +
+      '<label class="filter-field">商品<select id="filter-product">' + productOptions + "</select></label>" +
+      '<label class="filter-field">setup 標<select id="filter-setup">' + setupOptions + "</select></label>" +
+      '<label class="filter-field">從<input type="date" id="filter-from" value="' + escapeHtml(f.dateFrom || "") + '"></label>' +
+      '<label class="filter-field">到<input type="date" id="filter-to" value="' + escapeHtml(f.dateTo || "") + '"></label>' +
+      '<button class="ghost" id="filter-clear-btn">清除篩選</button>' +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderEquityCurve(equityCurve) {
+    if (!equityCurve) {
+      return '<p class="muted">全部帳戶不畫合成權益線（每戶初始資金不同，沒有一條真的總權益）</p>';
+    }
+    var points = equityCurve.points;
+    if (!points.length) {
+      return '<p class="muted">這個篩選下沒有交易，權益線只有起點 ' + money(equityCurve.startEquity) + "</p>";
+    }
+
+    var values = [equityCurve.startEquity].concat(points.map(function (p) { return p.equity; }));
+    var min = Math.min.apply(null, values);
+    var max = Math.max.apply(null, values);
+    var span = max - min || 1;
+    var W = 600;
+    var H = 140;
+    var pad = 8;
+
+    function xAt(i) {
+      return values.length <= 1 ? 0 : (i / (values.length - 1)) * W;
+    }
+    function yAt(v) {
+      return H - pad - ((v - min) / span) * (H - pad * 2);
+    }
+
+    var coords = values.map(function (v, i) { return xAt(i) + "," + yAt(v); }).join(" ");
+    var last = values[values.length - 1];
+    var lastColor = last > equityCurve.startEquity ? "var(--green)" : last < equityCurve.startEquity ? "var(--red)" : "var(--sky)";
+
+    return (
+      '<svg viewBox="0 0 ' + W + " " + H + '" class="equity-curve" preserveAspectRatio="none">' +
+      '<polyline points="' + coords + '" fill="none" stroke="' + lastColor + '" stroke-width="2"></polyline>' +
+      "</svg>"
+    );
+  }
+
+  function statHero(label, value) {
+    return '<div class="hero"><div class="l">' + escapeHtml(label) + '</div><div class="v">' + value + "</div></div>";
+  }
+
   function renderCommandCenter() {
     var accounts = store.getAccounts();
-    var cards = store.getCards();
-    var summary = store.getSummary();
     var demo = store.isDemoActive();
-
-    var sorted = cards.slice().sort(function (a, b) {
-      var ak = a.dateET + " " + a.timeET;
-      var bk = b.dateET + " " + b.timeET;
-      return bk.localeCompare(ak);
-    });
+    var stats = store.getCommandCenterStats(state.filters);
 
     var banner = demo
       ? '<div class="demo-banner">示範資料 — 這些是出廠範例交易，尚未有你自己的真實紀錄。存下第一筆真的交易報告卡後會自動消失。</div>'
       : "";
 
-    var heroes =
-      '<div class="heroes">' +
-      '<div class="hero"><div class="l">累積損益</div><div class="v">' + money(summary.netPnl) + "</div></div>" +
-      '<div class="hero"><div class="l">筆數</div><div class="v">' + summary.count + "</div></div>" +
+    var heroes = "";
+    if (stats.mode === "single") {
+      heroes +=
+        statHero("目前權益", money(stats.currentEquity)) +
+        statHero("初始資金", money(stats.startingCapital));
+    }
+    heroes +=
+      statHero("累積損益", money(stats.netPnl)) +
+      statHero("筆數", stats.count) +
+      statHero("勝率", pct(stats.winRate)) +
+      statHero("平均賺", money(stats.avgWin)) +
+      statHero("平均賠", money(stats.avgLoss)) +
+      statHero("期望值", money(stats.expectancy)) +
+      statHero("賺賠比", num(stats.profitFactor)) +
+      statHero("風報比", num(stats.rewardRiskRatio)) +
+      statHero("最大單筆賺", money(stats.maxWin)) +
+      statHero("最大單筆賠", money(stats.maxLoss)) +
+      statHero("總手續費", money(stats.totalFees));
+
+    var equityPanel =
+      '<div class="panel">' +
+      "<h2>權益線" + (stats.mode === "single" ? "（" + escapeHtml(stats.accountName) + "）" : "") + "</h2>" +
+      renderEquityCurve(stats.equityCurve) +
       "</div>";
+
+    var sorted = stats.cards.slice().sort(function (a, b) {
+      var ak = a.dateET + " " + a.timeET;
+      var bk = b.dateET + " " + b.timeET;
+      return bk.localeCompare(ak);
+    });
 
     var rows = sorted
       .map(function (c) {
@@ -94,11 +199,13 @@
       ? '<div class="scroll"><table class="grid"><tr>' +
         "<th>美東時間</th><th>商品</th><th>setup</th><th>帳戶</th><th>方向</th><th>口數</th><th>成績</th><th>執行</th><th>平倉損益</th><th>淨損益</th>" +
         "</tr>" + rows + "</table></div>"
-      : '<p class="muted">還沒有交易報告卡</p>';
+      : '<p class="muted">這個篩選沒有交易報告卡</p>';
 
     return (
       banner +
-      heroes +
+      renderFilterBar() +
+      '<div class="heroes">' + heroes + "</div>" +
+      equityPanel +
       '<div class="panel">' +
       '<div class="row" style="justify-content:space-between">' +
       "<h2>交易報告卡</h2>" +
@@ -198,6 +305,88 @@
     };
   }
 
+  // ---- settings (accounts / products / setups) -------------------------
+
+  function renderSettings() {
+    var accounts = store.getAccounts();
+    var products = store.getProducts();
+    var setups = store.getSetups();
+
+    var errorsHtml = state.settingsErrors.length
+      ? '<div class="form-errors"><ul>' +
+        state.settingsErrors.map(function (e) { return "<li>" + escapeHtml(e) + "</li>"; }).join("") +
+        "</ul></div>"
+      : "";
+
+    function listSection(opts) {
+      var rows = opts.items
+        .map(function (item) {
+          return (
+            '<li class="settings-row">' +
+            '<span>' + escapeHtml(opts.label(item)) + "</span>" +
+            '<button type="button" class="ghost" data-settings-remove="' + opts.kind + '" data-id="' + escapeHtml(opts.id(item)) + '">刪除</button>' +
+            "</li>"
+          );
+        })
+        .join("");
+
+      return (
+        '<div class="settings-section">' +
+        "<h3>" + escapeHtml(opts.title) + "</h3>" +
+        '<ul class="settings-list">' + rows + "</ul>" +
+        '<form class="settings-add-form" data-settings-add="' + opts.kind + '">' +
+        opts.formFields +
+        '<button type="submit" class="primary">新增' + escapeHtml(opts.title) + "</button>" +
+        "</form>" +
+        "</div>"
+      );
+    }
+
+    var accountsSection = listSection({
+      kind: "account",
+      title: "帳戶",
+      items: accounts,
+      id: function (a) { return a.id; },
+      label: function (a) { return a.name + "（初始資金 " + a.startingCapital.toLocaleString("en-US") + " USD）"; },
+      formFields:
+        '<input type="text" name="name" placeholder="帳戶名稱" required>' +
+        '<input type="number" name="startingCapital" placeholder="初始資金（USD，空＝0）" step="any">',
+    });
+
+    var productsSection = listSection({
+      kind: "product",
+      title: "商品",
+      items: products,
+      id: function (p) { return p; },
+      label: function (p) { return p; },
+      formFields: '<input type="text" name="name" placeholder="根代號，例如 MYM" required>',
+    });
+
+    var setupsSection = listSection({
+      kind: "setup",
+      title: "setup 標",
+      items: setups,
+      id: function (s) { return s; },
+      label: function (s) { return s; },
+      formFields: '<input type="text" name="name" placeholder="setup 標名稱" required>',
+    });
+
+    return (
+      '<div class="overlay" id="settings-overlay">' +
+      '<div class="sheet">' +
+      '<div class="row" style="justify-content:space-between">' +
+      "<h2>設定</h2>" +
+      '<button type="button" class="ghost" id="close-settings-btn">關閉</button>' +
+      "</div>" +
+      errorsHtml +
+      accountsSection +
+      productsSection +
+      setupsSection +
+      "</div>" +
+      "</div>"
+    );
+  }
+
   // ---- psychology stub -------------------------------------------------
 
   function renderPsych() {
@@ -219,12 +408,14 @@
       '<button class="' + (state.tab === "cmd" ? "on" : "") + '" data-tab="cmd">指揮中心</button>' +
       '<button class="' + (state.tab === "psych" ? "on" : "") + '" data-tab="psych">心理戰</button>' +
       "</nav>" +
+      '<button class="ghost topbar-right" id="open-settings-btn">設定</button>' +
       "</div>";
 
     var body = state.tab === "cmd" ? renderCommandCenter() : renderPsych();
-    var overlay = state.formOpen ? renderForm() : "";
+    var formOverlay = state.formOpen ? renderForm() : "";
+    var settingsOverlay = state.settingsOpen ? renderSettings() : "";
 
-    app.innerHTML = topbar + '<div class="col">' + body + "</div>" + overlay;
+    app.innerHTML = topbar + '<div class="col">' + body + "</div>" + formOverlay + settingsOverlay;
     wire();
   }
 
@@ -268,6 +459,123 @@
         }
         state.formOpen = false;
         state.formErrors = [];
+        render();
+      });
+    }
+
+    // ---- filter bar (指揮中心) ------------------------------------
+
+    var filterAccount = document.getElementById("filter-account");
+    if (filterAccount) {
+      filterAccount.addEventListener("change", function (e) {
+        state.filters.accountId = e.currentTarget.value;
+        render();
+      });
+    }
+    var filterProduct = document.getElementById("filter-product");
+    if (filterProduct) {
+      filterProduct.addEventListener("change", function (e) {
+        state.filters.product = e.currentTarget.value;
+        render();
+      });
+    }
+    var filterSetup = document.getElementById("filter-setup");
+    if (filterSetup) {
+      filterSetup.addEventListener("change", function (e) {
+        state.filters.setup = e.currentTarget.value;
+        render();
+      });
+    }
+    var filterFrom = document.getElementById("filter-from");
+    if (filterFrom) {
+      filterFrom.addEventListener("change", function (e) {
+        state.filters.dateFrom = e.currentTarget.value || null;
+        render();
+      });
+    }
+    var filterTo = document.getElementById("filter-to");
+    if (filterTo) {
+      filterTo.addEventListener("change", function (e) {
+        state.filters.dateTo = e.currentTarget.value || null;
+        render();
+      });
+    }
+    var filterClearBtn = document.getElementById("filter-clear-btn");
+    if (filterClearBtn) {
+      filterClearBtn.addEventListener("click", function () {
+        state.filters = store.createDefaultFilters();
+        render();
+      });
+    }
+
+    // ---- settings overlay --------------------------------------------
+
+    var openSettingsBtn = document.getElementById("open-settings-btn");
+    if (openSettingsBtn) {
+      openSettingsBtn.addEventListener("click", function () {
+        state.settingsOpen = true;
+        state.settingsErrors = [];
+        render();
+      });
+    }
+
+    var closeSettingsBtn = document.getElementById("close-settings-btn");
+    if (closeSettingsBtn) {
+      closeSettingsBtn.addEventListener("click", function () {
+        state.settingsOpen = false;
+        render();
+      });
+    }
+
+    var removeBtns = app.querySelectorAll("[data-settings-remove]");
+    for (var r = 0; r < removeBtns.length; r++) {
+      removeBtns[r].addEventListener("click", function (e) {
+        var kind = e.currentTarget.getAttribute("data-settings-remove");
+        var id = e.currentTarget.getAttribute("data-id");
+        var result;
+        if (kind === "account") result = store.removeAccount(id);
+        else if (kind === "product") result = store.removeProduct(id);
+        else result = store.removeSetup(id);
+
+        if (!result.ok) {
+          state.settingsErrors = result.errors;
+          render();
+          return;
+        }
+        state.settingsErrors = [];
+        // Don't leave the filter bar pointed at something that no longer exists.
+        if (kind === "account" && state.filters.accountId === id) state.filters.accountId = "all";
+        if (kind === "product" && state.filters.product === id) state.filters.product = "all";
+        if (kind === "setup" && state.filters.setup === id) state.filters.setup = "all";
+        render();
+      });
+    }
+
+    var addForms = app.querySelectorAll("[data-settings-add]");
+    for (var a = 0; a < addForms.length; a++) {
+      addForms[a].addEventListener("submit", function (e) {
+        e.preventDefault();
+        var kind = e.currentTarget.getAttribute("data-settings-add");
+        var fd = new FormData(e.currentTarget);
+        var result;
+        if (kind === "account") {
+          var startingCapital = fd.get("startingCapital");
+          result = store.addAccount({
+            name: fd.get("name"),
+            startingCapital: startingCapital === "" ? undefined : Number(startingCapital),
+          });
+        } else if (kind === "product") {
+          result = store.addProduct(fd.get("name"));
+        } else {
+          result = store.addSetup(fd.get("name"));
+        }
+
+        if (!result.ok) {
+          state.settingsErrors = result.errors;
+          render();
+          return;
+        }
+        state.settingsErrors = [];
         render();
       });
     }
