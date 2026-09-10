@@ -133,6 +133,12 @@
     );
   }
 
+  // 權益線 hover/click (ticket 20). Each <circle> below carries the point's
+  // date/equity/day-net-P&L/day-card-count as data-* attributes, read by
+  // wire() to show a tooltip on hover and open 當日日誌 on click. Hovering
+  // is pure DOM (no state change, no re-render) so it stays smooth; only a
+  // click ever touches `state`, and it only ever sets openDayJournalDate —
+  // never the filter bar, never any breakdown/heatmap/trade-list selection.
   function renderEquityCurve(equityCurve) {
     if (!equityCurve) {
       return '<p class="muted">全部帳戶不畫合成權益線（每戶初始資金不同，沒有一條真的總權益）</p>';
@@ -161,10 +167,28 @@
     var last = values[values.length - 1];
     var lastColor = last > equityCurve.startEquity ? "var(--green)" : last < equityCurve.startEquity ? "var(--red)" : "var(--sky)";
 
+    // One hoverable/clickable marker per card point (index i+1 into `values`,
+    // since index 0 is the synthetic startEquity vertex with no card behind it).
+    var markers = points
+      .map(function (p, i) {
+        return (
+          '<circle class="eq-point" cx="' + xAt(i + 1) + '" cy="' + yAt(p.equity) + '" r="5" ' +
+          'data-date="' + escapeHtml(p.dateET) + '" ' +
+          'data-equity="' + p.equity + '" ' +
+          'data-day-net-pnl="' + p.dayNetPnl + '" ' +
+          'data-day-count="' + p.dayCardCount + '"></circle>'
+        );
+      })
+      .join("");
+
     return (
+      '<div class="equity-curve-wrap">' +
       '<svg viewBox="0 0 ' + W + " " + H + '" class="equity-curve" preserveAspectRatio="none">' +
       '<polyline points="' + coords + '" fill="none" stroke="' + lastColor + '" stroke-width="2"></polyline>' +
-      "</svg>"
+      '<g class="eq-points">' + markers + "</g>" +
+      "</svg>" +
+      '<div class="equity-tooltip" id="equity-tooltip" hidden></div>' +
+      "</div>"
     );
   }
 
@@ -973,6 +997,52 @@
         state.settingsOpen = false;
         render();
       });
+    }
+
+    // ---- 權益線 hover + click (ticket 20) ------------------------------
+    //
+    // Hover is pure DOM (no state write, no render()) so it stays smooth
+    // while the mouse moves. Click is the only thing that touches `state`,
+    // and it only ever sets openDayJournalDate — exactly the same field and
+    // same four-overlay-exclusion dance the 損益月曆 day cells above use, so
+    // this reuses that one day-journal-opening mechanism rather than
+    // inventing a second one. It never touches state.filters, and never
+    // touches whatever selection state ticket 16's breakdown table / heatmap
+    // / trade list introduces.
+    var eqWrap = app.querySelector(".equity-curve-wrap");
+    var eqTooltip = document.getElementById("equity-tooltip");
+    var eqPoints = app.querySelectorAll(".eq-point");
+    for (var eq = 0; eq < eqPoints.length; eq++) {
+      (function (circle) {
+        function showTooltip(e) {
+          if (!eqTooltip || !eqWrap) return;
+          var rect = eqWrap.getBoundingClientRect();
+          var dateET = circle.getAttribute("data-date");
+          var equity = Number(circle.getAttribute("data-equity"));
+          var dayNetPnl = Number(circle.getAttribute("data-day-net-pnl"));
+          var dayCount = circle.getAttribute("data-day-count");
+          eqTooltip.innerHTML =
+            '<div class="d">' + escapeHtml(dateET) + "</div>" +
+            "<div>權益 " + money(equity) + "</div>" +
+            "<div>當日損益 " + money(dayNetPnl) + "</div>" +
+            "<div>筆數 " + escapeHtml(dayCount) + "</div>";
+          eqTooltip.hidden = false;
+          eqTooltip.style.left = (e.clientX - rect.left + 12) + "px";
+          eqTooltip.style.top = (e.clientY - rect.top - 12) + "px";
+        }
+        circle.addEventListener("mouseenter", showTooltip);
+        circle.addEventListener("mousemove", showTooltip);
+        circle.addEventListener("mouseleave", function () {
+          if (eqTooltip) eqTooltip.hidden = true;
+        });
+        circle.addEventListener("click", function () {
+          state.openDayJournalDate = circle.getAttribute("data-date");
+          state.openCardId = null;
+          state.formOpen = false;
+          state.settingsOpen = false;
+          render();
+        });
+      })(eqPoints[eq]);
     }
 
     // ---- settings overlay --------------------------------------------

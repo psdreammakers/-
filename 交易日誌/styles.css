@@ -113,10 +113,45 @@ nav.tabs button.on {
   font-size: 13px;
 }
 
+.equity-curve-wrap {
+  position: relative;
+}
+
 .equity-curve {
   width: 100%;
   height: 140px;
   display: block;
+}
+
+.eq-point {
+  fill: var(--sky);
+  fill-opacity: 0;
+  stroke: none;
+  cursor: pointer;
+}
+
+.eq-point:hover {
+  fill-opacity: 0.9;
+}
+
+.equity-tooltip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.equity-tooltip .d {
+  color: var(--muted);
+  margin-bottom: 2px;
 }
 
 .settings-section {

@@ -65,6 +65,19 @@
  *       date range is given, equityCurve.startEquity = 初始資金 + net P&L of that account's
  *       (product/setup-filtered) cards dated before the range start.
  *
+ *       Each point (ticket 20, one point per card, in chronological order) is
+ *       { cardId, dateET, timeET, pnl, equity, dayNetPnl, dayCardCount }:
+ *         pnl          - that one card's net P&L (平倉損益 − 手續費)
+ *         equity       - running equity through and including this card
+ *         dayNetPnl    - that whole 交易日's net P&L across the SAME filtered
+ *                        card set (not cumulative, not just this card) —
+ *                        identical on every point sharing a dateET
+ *         dayCardCount - that whole 交易日's card count, same filtered set,
+ *                        identical on every point sharing a dateET
+ *       This is what a hover/click UI (指揮中心's equity curve) reads to show
+ *       a day's 日期/權益/當日損益/筆數 without hand-rolling a second
+ *       "which cards belong to this day" definition.
+ *
  *     shared numeric fields on both shapes: count, netPnl (累積損益), winCount, lossCount,
  *     breakEvenCount, winRate, avgWin, avgLoss, expectancy, profitFactor (賺賠比),
  *     rewardRiskRatio (風報比), maxWin, maxLoss, totalFees, cards (the matching cards).
@@ -652,10 +665,32 @@
       }
 
       var startEquity = account.startingCapital + preRangeNet;
+
+      // Per-day aggregates (ticket 20) over this same filtered card set, so
+      // hovering any point that day shows the day's total, not a running
+      // partial. Keyed by dateET.
+      var dayTotals = Object.create(null);
+      for (var j = 0; j < inRange.length; j++) {
+        var dc = inRange[j];
+        var dt = dayTotals[dc.dateET] || { netPnl: 0, count: 0 };
+        dt.netPnl += netPnlOf(dc);
+        dt.count += 1;
+        dayTotals[dc.dateET] = dt;
+      }
+
       var running = startEquity;
       var points = inRange.map(function (c) {
         running += netPnlOf(c);
-        return { cardId: c.id, dateET: c.dateET, timeET: c.timeET, pnl: netPnlOf(c), equity: running };
+        var day = dayTotals[c.dateET];
+        return {
+          cardId: c.id,
+          dateET: c.dateET,
+          timeET: c.timeET,
+          pnl: netPnlOf(c),
+          equity: running,
+          dayNetPnl: day.netPnl,
+          dayCardCount: day.count,
+        };
       });
 
       var singleStats = computeCardStats(inRange);
