@@ -675,3 +675,15 @@ tr.picked td {
   outline: 1px solid var(--sky);
   cursor: pointer;
 }
+
+/* 經濟事件 (economic events, ticket 17) */
+
+.econ-input {
+  width: 84px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 6px;
+  color: var(--text);
+  font-size: 12px;
+}

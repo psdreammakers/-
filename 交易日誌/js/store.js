@@ -83,8 +83,27 @@
  *     rewardRiskRatio (風報比), maxWin, maxLoss, totalFees, cards (the matching cards).
  *   store.getCardsOnDate(d)    -> cards (demo-aware, like getCards()) dated d, sorted by time ascending
  *   store.getDayJournal(d)     -> { dateET, background, riskCapUsd, plannedSetups, planLine, didWell,
- *                                   changeTomorrow } for that 交易日 — always a valid empty shape if unsaved
- *   store.setDayJournal(d, f)  -> { ok:true, journal } | { ok:false, errors:string[] } (upserts whole record)
+ *                                   changeTomorrow, economicEvents } for that 交易日 — always a valid
+ *                                   empty shape if unsaved
+ *   store.setDayJournal(d, f)  -> { ok:true, journal } | { ok:false, errors:string[] } (upserts whole
+ *                                   record — but does NOT touch economicEvents; see below)
+ *
+ *   -- 經濟事件 (ticket 17): 日程表 lookup + per-user local data --
+ *   store.getEconomicEventsForDate(d) -> { dateET, scheduleVerifiedAsOf, scheduled, manual }
+ *     scheduled: rows from js/schedule.js (the shared, hand-maintained official table) that fall on
+ *       this 交易日, each with impact/actual/forecast layered on from this journal's local data (or
+ *       null if never filled in). Most dates: []. That's correct, not a failure — there is no live
+ *       fetch to fail, so there is never a "未能自動更新" state.
+ *     manual: rows the user typed in for this date only (js/schedule.js never sees these).
+ *     scheduleVerifiedAsOf: js/schedule.js's SCHEDULE_VERIFIED_AS_OF, so the UI can show "as of X" next
+ *       to an empty list, distinguishing "genuinely nothing today" from "table might be stale".
+ *   store.setEconomicEventLocalFields(d, eventId, {impact, actual, forecast})
+ *     -> { ok, journal? , errors? } — local-only overlay on one scheduled row. Never writes to
+ *        js/schedule.js. Rejects an eventId that isn't one of that date's scheduled rows.
+ *   store.addManualEconomicEvent(d, {timeET, name, agency, impact, actual, forecast})
+ *     -> { ok, journal?, errors? } — a hand-typed row that js/schedule.js's table doesn't cover for
+ *        that day (Fed minutes, ad-hoc releases). Lives only in this day's journal data.
+ *   store.removeManualEconomicEvent(d, id) -> { ok, journal?, errors? }
  *
  *   -- 心理遊戲 / 心理戰 (ticket 19) --
  *   A 心理遊戲 entry is written only when a decision was emotionally hijacked
@@ -167,6 +186,26 @@
 
   var STORAGE_KEY = "tradingJournal:v1";
 
+  // 日程表 (ticket 17): a separate, sibling module (js/schedule.js) — a plain
+  // hand-maintained table, not something this store computes. In Node
+  // (tests, this file's own module.exports branch) it's require()'d
+  // directly; in the browser it's a global set by schedule.js's own
+  // <script> tag, loaded before this file. If neither is present (schedule.js
+  // missing from the page) economic-event lookups degrade to "no scheduled
+  // rows" rather than throwing — manual rows and the rest of the day journal
+  // still work.
+  var Schedule = (function () {
+    if (typeof module !== "undefined" && module.exports) {
+      try {
+        return require("./schedule.js");
+      } catch (e) {
+        return null;
+      }
+    }
+    var g = typeof globalThis !== "undefined" ? globalThis : this;
+    return (g && g.TradingJournalSchedule) || null;
+  })();
+
   var GRADES = ["A", "B", "C", "D", "E", "F"];
   var SIDES = ["多", "空"];
   var MAX_SCREENSHOTS = 3;
@@ -227,6 +266,7 @@
       cards: [],
       nextCardSeq: 1,
       nextAccountSeq: 1,
+      nextEconomicEventSeq: 1,
       dayJournals: {},
       mindGameEntries: [],
       nextMindGameSeq: 1,
@@ -333,6 +373,7 @@
           cards: (parsed.cards && Array.isArray(parsed.cards)) ? parsed.cards : [],
           nextCardSeq: parsed.nextCardSeq || base.nextCardSeq,
           nextAccountSeq: parsed.nextAccountSeq || base.nextAccountSeq,
+          nextEconomicEventSeq: parsed.nextEconomicEventSeq || base.nextEconomicEventSeq,
           dayJournals: (parsed.dayJournals && typeof parsed.dayJournals === "object") ? parsed.dayJournals : {},
           mindGameEntries: (parsed.mindGameEntries && Array.isArray(parsed.mindGameEntries)) ? parsed.mindGameEntries : [],
           nextMindGameSeq: parsed.nextMindGameSeq || base.nextMindGameSeq,
@@ -920,20 +961,58 @@
       return out;
     }
 
+    function emptyEconomicEventsLocal() {
+      return { local: {}, manual: [] };
+    }
+
+    // Defensive merge, field by field, against emptyEconomicEventsLocal()
+    // rather than trusting the stored shape wholesale — a record can reach
+    // this function having been created by setDayJournal() alone (before
+    // ticket 17 existed, or before this date ever got an economic-event
+    // edit), in which case record.economicEvents is simply undefined.
+    function shapeEconomicEventsLocal(raw) {
+      raw = raw || {};
+      var local = {};
+      if (raw.local && typeof raw.local === "object") {
+        for (var eventId in raw.local) {
+          if (!Object.prototype.hasOwnProperty.call(raw.local, eventId)) continue;
+          var f = raw.local[eventId] || {};
+          local[eventId] = { impact: f.impact != null ? f.impact : null, actual: f.actual != null ? f.actual : null, forecast: f.forecast != null ? f.forecast : null };
+        }
+      }
+      var manual = Array.isArray(raw.manual) ? raw.manual.map(function (m) {
+        return {
+          id: m.id, dateET: m.dateET, timeET: m.timeET || null, name: m.name,
+          agency: m.agency != null ? m.agency : null,
+          impact: m.impact != null ? m.impact : null,
+          actual: m.actual != null ? m.actual : null,
+          forecast: m.forecast != null ? m.forecast : null,
+        };
+      }) : [];
+      return { local: local, manual: manual };
+    }
+
+    // Defensive merge against emptyDayJournalRecord() rather than trusting
+    // the stored record wholesale — a record can reach this function having
+    // been created by an economic-event write alone (see below), in which
+    // case background/riskCapUsd/etc. were never set.
     function shapeDayJournal(dateET, record) {
+      var base = emptyDayJournalRecord();
+      record = record || {};
       return {
         dateET: dateET,
-        background: record.background,
-        riskCapUsd: record.riskCapUsd,
-        plannedSetups: record.plannedSetups.slice(),
-        planLine: record.planLine,
-        didWell: record.didWell,
-        changeTomorrow: record.changeTomorrow,
+        background: record.background !== undefined ? record.background : base.background,
+        riskCapUsd: record.riskCapUsd !== undefined ? record.riskCapUsd : base.riskCapUsd,
+        plannedSetups: (Array.isArray(record.plannedSetups) ? record.plannedSetups : base.plannedSetups).slice(),
+        planLine: record.planLine !== undefined ? record.planLine : base.planLine,
+        didWell: record.didWell !== undefined ? record.didWell : base.didWell,
+        changeTomorrow: record.changeTomorrow !== undefined ? record.changeTomorrow : base.changeTomorrow,
+        economicEvents: shapeEconomicEventsLocal(record.economicEvents),
       };
     }
 
     function emptyDayJournalRecord() {
-      return { background: null, riskCapUsd: null, plannedSetups: [], planLine: null, didWell: null, changeTomorrow: null };
+      return { background: null, riskCapUsd: null, plannedSetups: [], planLine: null, didWell: null, changeTomorrow: null, economicEvents: emptyEconomicEventsLocal() };
     }
 
     function isValidDateET(dateET) {
@@ -955,6 +1034,7 @@
       }
       var state = getState();
       input = input || {};
+      var existing = state.dayJournals[dateET];
       var record = {
         background: toNullableLine(input.background),
         riskCapUsd: toNullableNumber(input.riskCapUsd),
@@ -962,6 +1042,12 @@
         planLine: toNullableLine(input.planLine),
         didWell: toNullableLine(input.didWell),
         changeTomorrow: toNullableLine(input.changeTomorrow),
+        // 經濟事件 (ticket 17) lives in its own appended section with its own
+        // add/edit functions below, not this form — carry it forward
+        // untouched so saving 當日背景/盤前/盤後 never wipes it, and vice
+        // versa. Same reasoning covers ticket 19's psychology section once
+        // merged in as its own carried-forward key.
+        economicEvents: (existing && existing.economicEvents) || emptyEconomicEventsLocal(),
       };
       state.dayJournals[dateET] = record;
       persist(state);
@@ -1080,6 +1166,132 @@
       return null;
     }
 
+    // ---- 經濟事件 (ticket 17): 日程表 lookup + per-user local overlay -------
+    //
+    // Scheduled rows come from js/schedule.js (pure, stateless, shared) and
+    // are never mutated here. What this store adds on top, per 交易日, lives
+    // only in state.dayJournals[dateET].economicEvents:
+    //   local:  { [scheduleRowId]: {impact, actual, forecast} } — per-user
+    //           fields layered onto an auto-appeared (scheduled) row.
+    //   manual: [{id, dateET, timeET, name, agency, impact, actual, forecast}]
+    //           — rows the user typed in because the official table doesn't
+    //           cover that day. Never written into js/schedule.js.
+    //
+    // Getting a lazily-created record here (one that only exists because of
+    // an economic-event write, never a setDayJournal() call) is exactly why
+    // shapeDayJournal()/emptyDayJournalRecord() default every other field
+    // defensively above — this function does not go through setDayJournal.
+
+    function getDayJournalRecordOrEmpty(state, dateET) {
+      return state.dayJournals[dateET] || emptyDayJournalRecord();
+    }
+
+    function getEconomicEventsForDate(dateET) {
+      if (!isValidDateET(dateET)) {
+        return { dateET: dateET, scheduleVerifiedAsOf: Schedule ? Schedule.SCHEDULE_VERIFIED_AS_OF : null, scheduled: [], manual: [] };
+      }
+      var state = getState();
+      var record = getDayJournalRecordOrEmpty(state, dateET);
+      var local = shapeEconomicEventsLocal(record.economicEvents);
+      var officialRows = Schedule ? Schedule.getScheduledEventsForDate(dateET) : [];
+
+      var scheduled = officialRows.map(function (row) {
+        var overlay = local.local[row.id] || { impact: null, actual: null, forecast: null };
+        return {
+          id: row.id, dateET: row.dateET, timeET: row.timeET, name: row.name, agency: row.agency, url: row.url,
+          impact: overlay.impact, actual: overlay.actual, forecast: overlay.forecast,
+        };
+      });
+
+      return {
+        dateET: dateET,
+        scheduleVerifiedAsOf: Schedule ? Schedule.SCHEDULE_VERIFIED_AS_OF : null,
+        scheduled: scheduled,
+        manual: local.manual.slice(),
+      };
+    }
+
+    function setEconomicEventLocalFields(dateET, eventId, fields) {
+      if (!isValidDateET(dateET)) {
+        return { ok: false, errors: ["美東日期：必須是有效日期"] };
+      }
+      var officialRows = Schedule ? Schedule.getScheduledEventsForDate(dateET) : [];
+      var isKnownRow = officialRows.some(function (row) { return row.id === eventId; });
+      if (!isKnownRow) {
+        return { ok: false, errors: ["經濟事件：這天的日程表裡沒有這一列"] };
+      }
+      fields = fields || {};
+      var state = getState();
+      var record = getDayJournalRecordOrEmpty(state, dateET);
+      var economicEvents = shapeEconomicEventsLocal(record.economicEvents);
+      economicEvents.local[eventId] = {
+        impact: toNullableLine(fields.impact),
+        actual: toNullableLine(fields.actual),
+        forecast: toNullableLine(fields.forecast),
+      };
+      var stored = { background: record.background, riskCapUsd: record.riskCapUsd, plannedSetups: record.plannedSetups, planLine: record.planLine, didWell: record.didWell, changeTomorrow: record.changeTomorrow, economicEvents: economicEvents };
+      state.dayJournals[dateET] = stored;
+      persist(state);
+      return { ok: true, journal: getEconomicEventsForDate(dateET) };
+    }
+
+    function addManualEconomicEvent(dateET, input) {
+      if (!isValidDateET(dateET)) {
+        return { ok: false, errors: ["美東日期：必須是有效日期"] };
+      }
+      input = input || {};
+      var name = toNullableLine(input.name);
+      if (!name) {
+        return { ok: false, errors: ["經濟事件：名稱不能空白"] };
+      }
+      if (input.timeET !== undefined && input.timeET !== null && input.timeET !== "" && !TIME_RE.test(input.timeET)) {
+        return { ok: false, errors: ["經濟事件：時間格式須為 HH:MM（可留空）"] };
+      }
+
+      var state = getState();
+      var record = getDayJournalRecordOrEmpty(state, dateET);
+      var economicEvents = shapeEconomicEventsLocal(record.economicEvents);
+
+      var row = {
+        id: "manual-" + state.nextEconomicEventSeq + "-" + Date.now(),
+        dateET: dateET,
+        timeET: toNullableLine(input.timeET),
+        name: name,
+        agency: toNullableLine(input.agency),
+        impact: toNullableLine(input.impact),
+        actual: toNullableLine(input.actual),
+        forecast: toNullableLine(input.forecast),
+      };
+      economicEvents.manual.push(row);
+      state.nextEconomicEventSeq += 1;
+
+      var stored = { background: record.background, riskCapUsd: record.riskCapUsd, plannedSetups: record.plannedSetups, planLine: record.planLine, didWell: record.didWell, changeTomorrow: record.changeTomorrow, economicEvents: economicEvents };
+      state.dayJournals[dateET] = stored;
+      persist(state);
+      return { ok: true, journal: getEconomicEventsForDate(dateET), event: row };
+    }
+
+    function removeManualEconomicEvent(dateET, id) {
+      if (!isValidDateET(dateET)) {
+        return { ok: false, errors: ["美東日期：必須是有效日期"] };
+      }
+      var state = getState();
+      var record = state.dayJournals[dateET];
+      if (!record || !record.economicEvents || !Array.isArray(record.economicEvents.manual)) {
+        return { ok: false, errors: ["經濟事件：找不到這一筆手填列"] };
+      }
+      var idx = -1;
+      for (var i = 0; i < record.economicEvents.manual.length; i++) {
+        if (record.economicEvents.manual[i].id === id) { idx = i; break; }
+      }
+      if (idx === -1) {
+        return { ok: false, errors: ["經濟事件：找不到這一筆手填列"] };
+      }
+      record.economicEvents.manual.splice(idx, 1);
+      persist(state);
+      return { ok: true, journal: getEconomicEventsForDate(dateET) };
+    }
+
     return {
       getSettings: getSettings,
       getProducts: getProducts,
@@ -1117,6 +1329,10 @@
       getMindGameEntriesForDate: getMindGameEntriesForDate,
       getAllMindGameEntries: getAllMindGameEntries,
       getMindGameEntryById: getMindGameEntryById,
+      getEconomicEventsForDate: getEconomicEventsForDate,
+      setEconomicEventLocalFields: setEconomicEventLocalFields,
+      addManualEconomicEvent: addManualEconomicEvent,
+      removeManualEconomicEvent: removeManualEconomicEvent,
     };
   }
 
