@@ -68,6 +68,10 @@
  *     shared numeric fields on both shapes: count, netPnl (累積損益), winCount, lossCount,
  *     breakEvenCount, winRate, avgWin, avgLoss, expectancy, profitFactor (賺賠比),
  *     rewardRiskRatio (風報比), maxWin, maxLoss, totalFees, cards (the matching cards).
+ *   store.getCardsOnDate(d)    -> cards (demo-aware, like getCards()) dated d, sorted by time ascending
+ *   store.getDayJournal(d)     -> { dateET, background, riskCapUsd, plannedSetups, planLine, didWell,
+ *                                   changeTomorrow } for that 交易日 — always a valid empty shape if unsaved
+ *   store.setDayJournal(d, f)  -> { ok:true, journal } | { ok:false, errors:string[] } (upserts whole record)
  *
  * Design note: demo data is never written to storage. It is a constant that
  * getCards() returns only while getRealCards() is empty. The moment one real
@@ -136,6 +140,7 @@
       cards: [],
       nextCardSeq: 1,
       nextAccountSeq: 1,
+      dayJournals: {},
     };
   }
 
@@ -239,6 +244,7 @@
           cards: (parsed.cards && Array.isArray(parsed.cards)) ? parsed.cards : [],
           nextCardSeq: parsed.nextCardSeq || base.nextCardSeq,
           nextAccountSeq: parsed.nextAccountSeq || base.nextAccountSeq,
+          dayJournals: (parsed.dayJournals && typeof parsed.dayJournals === "object") ? parsed.dayJournals : {},
         };
       } catch (e) {
         return defaultState();
@@ -663,6 +669,82 @@
       return singleStats;
     }
 
+    // ---- 交易日 (calendar-day) lookups ---------------------------------
+
+    function getCardsOnDate(dateET) {
+      return getCards()
+        .filter(function (c) { return c.dateET === dateET; })
+        .sort(function (a, b) {
+          if (a.timeET < b.timeET) return -1;
+          if (a.timeET > b.timeET) return 1;
+          return 0;
+        });
+    }
+
+    // ---- 當日日誌 (day journal) -----------------------------------------
+
+    function normalizePlannedSetups(input, setups) {
+      if (!Array.isArray(input)) return [];
+      var seen = Object.create(null);
+      var out = [];
+      for (var i = 0; i < input.length; i++) {
+        var s = input[i];
+        if (typeof s === "string" && setups.indexOf(s) !== -1 && !seen[s]) {
+          seen[s] = true;
+          out.push(s);
+        }
+      }
+      return out;
+    }
+
+    function shapeDayJournal(dateET, record) {
+      return {
+        dateET: dateET,
+        background: record.background,
+        riskCapUsd: record.riskCapUsd,
+        plannedSetups: record.plannedSetups.slice(),
+        planLine: record.planLine,
+        didWell: record.didWell,
+        changeTomorrow: record.changeTomorrow,
+      };
+    }
+
+    function emptyDayJournalRecord() {
+      return { background: null, riskCapUsd: null, plannedSetups: [], planLine: null, didWell: null, changeTomorrow: null };
+    }
+
+    function isValidDateET(dateET) {
+      return typeof dateET === "string" && DATE_RE.test(dateET) && !isNaN(Date.parse(dateET + "T00:00:00Z"));
+    }
+
+    function getDayJournal(dateET) {
+      if (!isValidDateET(dateET)) {
+        return shapeDayJournal(dateET, emptyDayJournalRecord());
+      }
+      var state = getState();
+      var rec = state.dayJournals[dateET];
+      return shapeDayJournal(dateET, rec || emptyDayJournalRecord());
+    }
+
+    function setDayJournal(dateET, input) {
+      if (!isValidDateET(dateET)) {
+        return { ok: false, errors: ["美東日期：必須是有效日期"] };
+      }
+      var state = getState();
+      input = input || {};
+      var record = {
+        background: toNullableLine(input.background),
+        riskCapUsd: toNullableNumber(input.riskCapUsd),
+        plannedSetups: normalizePlannedSetups(input.plannedSetups, state.settings.setups),
+        planLine: toNullableLine(input.planLine),
+        didWell: toNullableLine(input.didWell),
+        changeTomorrow: toNullableLine(input.changeTomorrow),
+      };
+      state.dayJournals[dateET] = record;
+      persist(state);
+      return { ok: true, journal: shapeDayJournal(dateET, record) };
+    }
+
     return {
       getSettings: getSettings,
       getProducts: getProducts,
@@ -687,6 +769,9 @@
       removeAccount: removeAccount,
       createDefaultFilters: createDefaultFilters,
       getCommandCenterStats: getCommandCenterStats,
+      getCardsOnDate: getCardsOnDate,
+      getDayJournal: getDayJournal,
+      setDayJournal: setDayJournal,
     };
   }
 

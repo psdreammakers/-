@@ -13,14 +13,48 @@
     tab: "cmd", // "cmd" | "psych"
     formOpen: false,
     formErrors: [],
-    openCardId: null, // set when a trade report card's detail view is open
+    openCardId: null, // set when a trade report card's detail view is open (also opened from 當日日誌)
     detailErrors: [],
     filters: store.createDefaultFilters(),
     settingsOpen: false,
     settingsErrors: [],
+    calendarMonth: currentMonthET(), // "YYYY-MM", 損益月曆 shown on 指揮中心
+    openDayJournalDate: null, // "YYYY-MM-DD" | null — 當日日誌 overlay
   };
 
   var app = document.getElementById("app");
+  var WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
+
+  function pad2(n) {
+    return n < 10 ? "0" + n : String(n);
+  }
+
+  // 交易日 is an America/New_York calendar date (same as each card's dateET).
+  function todayET() {
+    try {
+      var fmt = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/New_York",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+      return fmt.format(new Date());
+    } catch (e) {
+      var d = new Date();
+      return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+    }
+  }
+
+  function currentMonthET() {
+    return todayET().slice(0, 7);
+  }
+
+  function shiftMonth(ym, delta) {
+    var year = parseInt(ym.slice(0, 4), 10);
+    var month = parseInt(ym.slice(5, 7), 10);
+    var d = new Date(Date.UTC(year, month - 1 + delta, 1));
+    return d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1);
+  }
 
   function money(n) {
     if (n === null || n === undefined || isNaN(n)) return "—";
@@ -208,6 +242,7 @@
       renderFilterBar() +
       '<div class="heroes">' + heroes + "</div>" +
       equityPanel +
+      renderCalendar() +
       '<div class="panel">' +
       '<div class="row" style="justify-content:space-between">' +
       "<h2>交易報告卡</h2>" +
@@ -216,6 +251,199 @@
       table +
       "</div>"
     );
+  }
+
+  // ---- 損益月曆 (P&L calendar) ------------------------------------------
+  //
+  // Lives on 指揮中心, not a separate tab. One cell per 交易日 (America/New_York
+  // calendar date), colored by that day's net P&L sign, with a weekly total
+  // per row. Clicking a day only opens 當日日誌 — it does not touch any
+  // filter used by the breakdown table / heatmap / trade list (ticket 16).
+
+  function buildMonthGrid(ym, byDate) {
+    var year = parseInt(ym.slice(0, 4), 10);
+    var month = parseInt(ym.slice(5, 7), 10); // 1-12
+    var daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    var firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay(); // 0=Sun
+
+    var cells = [];
+    for (var i = 0; i < firstWeekday; i++) cells.push(null);
+    for (var d = 1; d <= daysInMonth; d++) cells.push(ym + "-" + pad2(d));
+    while (cells.length % 7 !== 0) cells.push(null);
+
+    var rows = [];
+    for (var start = 0; start < cells.length; start += 7) {
+      var weekCells = cells.slice(start, start + 7);
+      var weekNetPnl = 0;
+      var weekCount = 0;
+      weekCells.forEach(function (dateET) {
+        var rec = dateET && byDate[dateET];
+        if (rec) {
+          weekNetPnl += rec.netPnl;
+          weekCount += rec.count;
+        }
+      });
+      rows.push({ cells: weekCells, weekNetPnl: weekNetPnl, weekCount: weekCount });
+    }
+    return rows;
+  }
+
+  function renderCalendar() {
+    var ym = state.calendarMonth;
+    var cards = store.getCards();
+    var byDate = {};
+    cards.forEach(function (c) {
+      if (c.dateET.slice(0, 7) !== ym) return;
+      var rec = byDate[c.dateET] || { netPnl: 0, count: 0 };
+      rec.netPnl += store.netPnlOf(c);
+      rec.count += 1;
+      byDate[c.dateET] = rec;
+    });
+
+    var weeks = buildMonthGrid(ym, byDate);
+
+    var head =
+      WEEKDAY_LABELS.map(function (w) { return '<div class="cal-hd">' + w + "</div>"; }).join("") +
+      '<div class="cal-hd">週合計</div>';
+
+    var body = weeks
+      .map(function (week) {
+        var dayCells = week.cells
+          .map(function (dateET) {
+            if (!dateET) return '<div class="cal-day empty"></div>';
+            var rec = byDate[dateET];
+            var cls = "cal-day";
+            if (rec) cls += rec.netPnl > 0 ? " up" : rec.netPnl < 0 ? " down" : " flat";
+            var dayNum = parseInt(dateET.slice(8, 10), 10);
+            return (
+              '<button type="button" class="' + cls + '" data-date="' + dateET + '">' +
+              '<div class="n">' + dayNum + "</div>" +
+              (rec ? '<div class="p">' + money(rec.netPnl) + '</div><div class="c">' + rec.count + " 筆</div>" : "") +
+              "</button>"
+            );
+          })
+          .join("");
+        var weekCell =
+          '<div class="cal-week"><div>' + money(week.weekNetPnl) + '</div><div class="muted">' + week.weekCount + " 筆</div></div>";
+        return dayCells + weekCell;
+      })
+      .join("");
+
+    return (
+      '<div class="panel">' +
+      '<div class="row" style="justify-content:space-between">' +
+      "<h2>損益月曆</h2>" +
+      '<div class="row">' +
+      '<button type="button" class="ghost" id="cal-prev">‹</button>' +
+      '<span class="muted">' + escapeHtml(ym) + "</span>" +
+      '<button type="button" class="ghost" id="cal-next">›</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="cal-grid">' + head + body + "</div>" +
+      "</div>"
+    );
+  }
+
+  // ---- 當日日誌 (daily journal) -----------------------------------------
+  //
+  // One page per 交易日, opened by clicking a 損益月曆 day (including days
+  // with zero trades — it must open fully blank, not conditional on having
+  // trades). Not split by product. The day's trade cards are auto-listed
+  // (no manual selection) in ascending time order; clicking a row opens the
+  // same 交易報告卡 view the main list opens (see findCardById / renderCardSheet).
+
+  function renderDayJournal(dateET) {
+    var journal = store.getDayJournal(dateET);
+    var setups = store.getSetups();
+    var accounts = store.getAccounts();
+    var cardsOnDate = store.getCardsOnDate(dateET);
+
+    var setupChecks = setups
+      .map(function (s) {
+        var checked = journal.plannedSetups.indexOf(s) !== -1 ? " checked" : "";
+        return (
+          '<label class="chk"><input type="checkbox" name="plannedSetups" value="' + escapeHtml(s) + '"' + checked + "> " +
+          escapeHtml(s) + "</label>"
+        );
+      })
+      .join("");
+
+    var rows = cardsOnDate
+      .map(function (c) {
+        return (
+          '<tr class="clickable" data-card-id="' + escapeHtml(c.id) + '">' +
+          "<td>" + escapeHtml(c.timeET) + "</td>" +
+          "<td>" + escapeHtml(accountName(c.accountId, accounts)) + "</td>" +
+          "<td>" + escapeHtml(c.product) + "</td>" +
+          "<td>" + escapeHtml(c.setup) + "</td>" +
+          "<td>" + escapeHtml(c.side) + "</td>" +
+          "<td>" + c.size + "</td>" +
+          "<td>" + escapeHtml(c.grade) + "</td>" +
+          "<td>" + escapeHtml(c.execGrade) + "</td>" +
+          "<td>" + money(c.pnl) + "</td>" +
+          "<td>" + money(store.netPnlOf(c)) + "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var tradeTable = cardsOnDate.length
+      ? '<div class="scroll"><table class="grid"><tr>' +
+        "<th>美東時間</th><th>帳戶</th><th>商品</th><th>setup</th><th>方向</th><th>口數</th><th>成績</th><th>執行</th><th>平倉損益</th><th>淨損益</th>" +
+        "</tr>" + rows + "</table></div>"
+      : '<p class="muted">這天沒有交易報告卡</p>';
+
+    return (
+      '<div class="overlay" id="day-journal-overlay">' +
+      '<div class="sheet">' +
+      "<h2>當日日誌 · 美東 " + escapeHtml(dateET) + "</h2>" +
+      '<form id="day-journal-form">' +
+      '<label class="full">當日背景（有事才寫，可空：斷線／會議／資金異動／生活事件／跳空）' +
+      '<input type="text" name="background" maxlength="160" value="' + escapeHtml(journal.background || "") + '"></label>' +
+      "<h3>盤前</h3>" +
+      '<div class="field-grid">' +
+      '<label>風險上限（USD，可空）<input type="number" name="riskCapUsd" step="any" value="' +
+      (journal.riskCapUsd === null ? "" : journal.riskCapUsd) + '"></label>' +
+      '<label>一句計畫（可空）<input type="text" name="planLine" maxlength="120" value="' + escapeHtml(journal.planLine || "") + '"></label>' +
+      "</div>" +
+      '<p class="muted" style="margin:8px 0 4px">今天只做哪些 setup 標（可多選，只是計畫，不篩限當天能記的交易）</p>' +
+      '<div class="row">' + (setupChecks || '<span class="muted">尚無 setup 標</span>') + "</div>" +
+      "<h3>盤後</h3>" +
+      '<div class="field-grid">' +
+      '<label>做得好的一件（可空）<input type="text" name="didWell" maxlength="120" value="' + escapeHtml(journal.didWell || "") + '"></label>' +
+      '<label>明天只改一件（可空）<input type="text" name="changeTomorrow" maxlength="120" value="' + escapeHtml(journal.changeTomorrow || "") + '"></label>' +
+      "</div>" +
+      '<p class="row" style="margin-top:14px">' +
+      '<button type="submit" class="primary">存檔</button>' +
+      '<button type="button" class="ghost" id="close-day-journal-btn">關閉</button>' +
+      "</p>" +
+      "</form>" +
+      '<h3 style="margin-top:16px">當天交易報告卡</h3>' +
+      tradeTable +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function readDayJournalFormInput(form) {
+    var fd = new FormData(form);
+    function line(name) {
+      var v = fd.get(name);
+      return v === null ? undefined : v;
+    }
+    function num(name) {
+      var v = fd.get(name);
+      if (v === null || v === "") return undefined;
+      return Number(v);
+    }
+    return {
+      background: line("background"),
+      riskCapUsd: num("riskCapUsd"),
+      plannedSetups: fd.getAll("plannedSetups"),
+      planLine: line("planLine"),
+      didWell: line("didWell"),
+      changeTomorrow: line("changeTomorrow"),
+    };
   }
 
   // ---- new trade report card form ------------------------------------
@@ -516,11 +744,27 @@
       "</div>";
 
     var body = state.tab === "cmd" ? renderCommandCenter() : renderPsych();
-    var formOverlay = state.formOpen ? renderForm() : "";
-    var detailOverlay = state.openCardId ? renderCardDetail(state.openCardId) : "";
-    var settingsOverlay = state.settingsOpen ? renderSettings() : "";
 
-    app.innerHTML = topbar + '<div class="col">' + body + "</div>" + formOverlay + detailOverlay + settingsOverlay;
+    // Four mutually-exclusive overlays: 交易報告卡 detail (openCardId), 當日
+    // 日誌 (openDayJournalDate), the new-card form (formOpen), and settings
+    // (settingsOpen). Opening any one is expected to close the other three —
+    // wire() below enforces that on every entry point. The one deliberate
+    // exception: clicking a trade row from inside 當日日誌 opens the card
+    // detail on top of it (openCardId gets set without clearing
+    // openDayJournalDate), so closing the card detail returns to the day
+    // journal instead of losing your place.
+    var overlay = "";
+    if (state.openCardId) {
+      overlay = renderCardDetail(state.openCardId);
+    } else if (state.openDayJournalDate) {
+      overlay = renderDayJournal(state.openDayJournalDate);
+    } else if (state.formOpen) {
+      overlay = renderForm();
+    } else if (state.settingsOpen) {
+      overlay = renderSettings();
+    }
+
+    app.innerHTML = topbar + '<div class="col">' + body + "</div>" + overlay;
     wire();
   }
 
@@ -532,6 +776,7 @@
         state.formOpen = false;
         state.openCardId = null;
         state.settingsOpen = false;
+        state.openDayJournalDate = null;
         render();
       });
     }
@@ -543,13 +788,21 @@
         state.formErrors = [];
         state.openCardId = null;
         state.settingsOpen = false;
+        state.openDayJournalDate = null;
         render();
       });
     }
 
-    var cardRows = app.querySelectorAll("tr[data-card-id]");
+    // Broad selector on purpose: every trade-card list (main 指揮中心 table,
+    // and 當日日誌's day list) marks its rows with data-card-id, and they all
+    // open the same 交易報告卡 detail view below — one click-handler for
+    // every card row, no matter which list/overlay it's rendered inside.
+    var cardRows = app.querySelectorAll("[data-card-id]");
     for (var r = 0; r < cardRows.length; r++) {
       cardRows[r].addEventListener("click", function (e) {
+        // Deliberately does not touch openDayJournalDate: clicking a row
+        // from inside 當日日誌 opens the card detail on top of it, so
+        // closing the detail lands back on the day journal.
         state.openCardId = e.currentTarget.getAttribute("data-card-id");
         state.detailErrors = [];
         state.formOpen = false;
@@ -692,6 +945,36 @@
       });
     }
 
+    // ---- 損益月曆 -------------------------------------------------------
+
+    var calPrev = document.getElementById("cal-prev");
+    if (calPrev) {
+      calPrev.addEventListener("click", function () {
+        state.calendarMonth = shiftMonth(state.calendarMonth, -1);
+        render();
+      });
+    }
+    var calNext = document.getElementById("cal-next");
+    if (calNext) {
+      calNext.addEventListener("click", function () {
+        state.calendarMonth = shiftMonth(state.calendarMonth, 1);
+        render();
+      });
+    }
+    var calDays = app.querySelectorAll(".cal-day[data-date]");
+    for (var d = 0; d < calDays.length; d++) {
+      calDays[d].addEventListener("click", function (e) {
+        // Opens 當日日誌 only — does not touch any breakdown/heatmap/trade-list
+        // filter. Folds in as the fourth mutually-exclusive overlay: closes
+        // form/settings/card-detail, same as any other "open an overlay" entry.
+        state.openDayJournalDate = e.currentTarget.getAttribute("data-date");
+        state.openCardId = null;
+        state.formOpen = false;
+        state.settingsOpen = false;
+        render();
+      });
+    }
+
     // ---- settings overlay --------------------------------------------
 
     var openSettingsBtn = document.getElementById("open-settings-btn");
@@ -701,6 +984,7 @@
         state.settingsErrors = [];
         state.formOpen = false;
         state.openCardId = null;
+        state.openDayJournalDate = null;
         render();
       });
     }
@@ -762,6 +1046,25 @@
           return;
         }
         state.settingsErrors = [];
+        render();
+      });
+    }
+
+    // ---- 當日日誌 -------------------------------------------------------
+
+    var closeDayJournalBtn = document.getElementById("close-day-journal-btn");
+    if (closeDayJournalBtn) {
+      closeDayJournalBtn.addEventListener("click", function () {
+        state.openDayJournalDate = null;
+        render();
+      });
+    }
+    var dayJournalForm = document.getElementById("day-journal-form");
+    if (dayJournalForm) {
+      dayJournalForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var input = readDayJournalFormInput(dayJournalForm);
+        store.setDayJournal(state.openDayJournalDate, input);
         render();
       });
     }
