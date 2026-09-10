@@ -86,6 +86,28 @@
  *                                   changeTomorrow } for that 交易日 — always a valid empty shape if unsaved
  *   store.setDayJournal(d, f)  -> { ok:true, journal } | { ok:false, errors:string[] } (upserts whole record)
  *
+ *   -- 心理遊戲 / 心理戰 (ticket 19) --
+ *   A 心理遊戲 entry is written only when a decision was emotionally hijacked
+ *   (not a daily mood log, no per-trade or per-day required field). Every
+ *   entry has a fixed 類型 (one of MIND_GAME_TYPES, below — never editable
+ *   via settings), a required 強度 1–10, an optional one-line 一句說明 (except
+ *   when 類型 is "其他", where it becomes required), and a binding to EXACTLY
+ *   ONE of {cardId, dateET} — never both, never neither. A card-bound entry
+ *   is how it "shows up" for that card's day; there is no separate/implicit
+ *   day binding for the same entry. Same-day and same-card entries are
+ *   unlimited (no daily or per-card cap).
+ *
+ *   store.addMindGameEntry(input)         -> { ok:true, entry } | { ok:false, errors:string[] }
+ *     input: { type, intensity, note?, cardId? , dateET? } — exactly one of
+ *     cardId/dateET. cardId must reference an existing REAL card (demo cards
+ *     are read-only, same principle as screenshots).
+ *   store.getMindGameEntriesForCard(cardId) -> entries bound to that card, oldest first
+ *   store.getMindGameEntriesForDate(dateET) -> entries bound to that day, oldest first
+ *   store.getAllMindGameEntries()           -> every entry (card- and day-bound), newest first
+ *     (the 心理戰 tab's browse view — a third door into the same data, not a
+ *     separate store)
+ *   store.getMindGameEntryById(id)          -> entry | null
+ *
  * Design note: demo data is never written to storage. It is a constant that
  * getCards() returns only while getRealCards() is empty. The moment one real
  * card is saved, demo data is gone by construction — there is nothing to
@@ -105,6 +127,15 @@
   var GRADES = ["A", "B", "C", "D", "E", "F"];
   var SIDES = ["多", "空"];
   var MAX_SCREENSHOTS = 3;
+
+  // 心理遊戲 類型: fixed, first-version list. No settings UI to add/remove
+  // these, ever (per the ticket). 其他 is for a genuinely new emotional
+  // category not yet on this list (with the mandatory 一句說明 covering what
+  // it actually was) — never a stand-in for sleep issues, rule-breaks,
+  // oversizing or disconnects, which are explicitly not 心理遊戲 types.
+  var MIND_GAME_TYPES = ["想翻本", "怕錯過", "怕虧", "犯錯怒", "覺得不公平", "覺得自己該贏", "其他"];
+  var MIN_INTENSITY = 1;
+  var MAX_INTENSITY = 10;
 
   var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
   var TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -154,6 +185,8 @@
       nextCardSeq: 1,
       nextAccountSeq: 1,
       dayJournals: {},
+      mindGameEntries: [],
+      nextMindGameSeq: 1,
     };
   }
 
@@ -258,6 +291,8 @@
           nextCardSeq: parsed.nextCardSeq || base.nextCardSeq,
           nextAccountSeq: parsed.nextAccountSeq || base.nextAccountSeq,
           dayJournals: (parsed.dayJournals && typeof parsed.dayJournals === "object") ? parsed.dayJournals : {},
+          mindGameEntries: (parsed.mindGameEntries && Array.isArray(parsed.mindGameEntries)) ? parsed.mindGameEntries : [],
+          nextMindGameSeq: parsed.nextMindGameSeq || base.nextMindGameSeq,
         };
       } catch (e) {
         return defaultState();
@@ -780,6 +815,118 @@
       return { ok: true, journal: shapeDayJournal(dateET, record) };
     }
 
+    // ---- 心理遊戲 / 心理戰 (ticket 19) -----------------------------------
+    //
+    // Written only at the moment a decision was emotionally hijacked — not a
+    // daily mood log, no per-trade or per-day required field, no cap on how
+    // many entries share a day or a card. A binding is exactly one of
+    // {cardId, dateET}: if a trade actually happened, the entry binds to
+    // that report card (its own date is how it "shows up" for that day —
+    // never ALSO store a day binding for the same entry); a day binding is
+    // only for when there was no corresponding trade.
+
+    function shapeMindGameEntry(record) {
+      return {
+        id: record.id,
+        seq: record.seq,
+        type: record.type,
+        intensity: record.intensity,
+        note: record.note,
+        cardId: record.cardId,
+        dateET: record.dateET,
+      };
+    }
+
+    function addMindGameEntry(input) {
+      var state = getState();
+      input = input || {};
+      var errors = [];
+
+      var type = input.type;
+      if (!type || MIND_GAME_TYPES.indexOf(type) === -1) {
+        errors.push("類型：必須是心理遊戲固定類型之一");
+      }
+
+      var intensity = input.intensity;
+      if (!Number.isInteger(intensity) || intensity < MIN_INTENSITY || intensity > MAX_INTENSITY) {
+        errors.push("強度：必須是 " + MIN_INTENSITY + "–" + MAX_INTENSITY + " 的整數");
+      }
+
+      var note = toNullableLine(input.note);
+      if (type === "其他" && !note) {
+        errors.push("一句說明：類型選「其他」時必填");
+      }
+
+      var hasCardId = typeof input.cardId === "string" && input.cardId.trim() !== "";
+      var hasDateET = typeof input.dateET === "string" && input.dateET.trim() !== "";
+
+      if (hasCardId && hasDateET) {
+        errors.push("綁定：只能綁一張交易報告卡或一個交易日，不能兩者都綁");
+      } else if (!hasCardId && !hasDateET) {
+        errors.push("綁定：必須綁一張交易報告卡或一個交易日");
+      } else if (hasCardId) {
+        if (findRealCardIndex(state, input.cardId) === -1) {
+          // Covers both "no such card" and "this is demo data" — same
+          // read-only-demo principle as addScreenshot above.
+          errors.push("找不到這筆交易報告卡（示範資料不可記心理遊戲）");
+        }
+      } else if (!isValidDateET(input.dateET)) {
+        errors.push("交易日：必須是有效日期");
+      }
+
+      if (errors.length > 0) {
+        return { ok: false, errors: errors };
+      }
+
+      var record = {
+        id: "mindgame-" + state.nextMindGameSeq + "-" + Date.now(),
+        seq: state.nextMindGameSeq,
+        type: type,
+        intensity: intensity,
+        note: note,
+        cardId: hasCardId ? input.cardId : null,
+        dateET: hasDateET ? input.dateET : null,
+      };
+
+      state.mindGameEntries.push(record);
+      state.nextMindGameSeq += 1;
+      persist(state);
+
+      return { ok: true, entry: shapeMindGameEntry(record) };
+    }
+
+    function getMindGameEntriesForCard(cardId) {
+      var state = getState();
+      return state.mindGameEntries
+        .filter(function (e) { return e.cardId === cardId; })
+        .sort(function (a, b) { return a.seq - b.seq; })
+        .map(shapeMindGameEntry);
+    }
+
+    function getMindGameEntriesForDate(dateET) {
+      var state = getState();
+      return state.mindGameEntries
+        .filter(function (e) { return e.dateET === dateET; })
+        .sort(function (a, b) { return a.seq - b.seq; })
+        .map(shapeMindGameEntry);
+    }
+
+    function getAllMindGameEntries() {
+      var state = getState();
+      return state.mindGameEntries
+        .slice()
+        .sort(function (a, b) { return b.seq - a.seq; }) // newest first, for the 心理戰 browse tab
+        .map(shapeMindGameEntry);
+    }
+
+    function getMindGameEntryById(id) {
+      var state = getState();
+      for (var i = 0; i < state.mindGameEntries.length; i++) {
+        if (state.mindGameEntries[i].id === id) return shapeMindGameEntry(state.mindGameEntries[i]);
+      }
+      return null;
+    }
+
     return {
       getSettings: getSettings,
       getProducts: getProducts,
@@ -807,6 +954,11 @@
       getCardsOnDate: getCardsOnDate,
       getDayJournal: getDayJournal,
       setDayJournal: setDayJournal,
+      addMindGameEntry: addMindGameEntry,
+      getMindGameEntriesForCard: getMindGameEntriesForCard,
+      getMindGameEntriesForDate: getMindGameEntriesForDate,
+      getAllMindGameEntries: getAllMindGameEntries,
+      getMindGameEntryById: getMindGameEntryById,
     };
   }
 
@@ -823,5 +975,6 @@
     SIDES: SIDES,
     DEMO_CARDS: DEMO_CARDS,
     MAX_SCREENSHOTS: MAX_SCREENSHOTS,
+    MIND_GAME_TYPES: MIND_GAME_TYPES,
   };
 });
