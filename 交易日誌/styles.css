@@ -581,3 +581,97 @@ label.chk {
 .mindgame-form {
   margin-top: 6px;
 }
+
+/* 分解表 · 時段熱力圖 · 交易報告卡清單聯動 (ticket 16) */
+
+.chip {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+.chip.on {
+  background: #0ea5e9;
+  color: #0f172a;
+  border-color: #0ea5e9;
+  font-weight: 600;
+}
+
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+th.sortable:hover {
+  color: var(--text);
+}
+
+tr.picked td {
+  background: rgba(125, 211, 252, 0.12);
+}
+
+.heatmap-grid {
+  display: grid;
+  grid-template-columns: 32px repeat(24, minmax(28px, 1fr));
+  gap: 2px;
+  margin: 6px 0 4px;
+}
+
+.heatmap-hd {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  padding: 2px 0;
+}
+
+.heatmap-hd.corner {
+  background: transparent;
+}
+
+.heatmap-wd {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.heatmap-cell {
+  min-height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #12171e;
+  color: var(--text);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  padding: 0;
+}
+
+.heatmap-cell.empty {
+  background: transparent;
+  border-color: transparent;
+}
+
+.heatmap-cell.pos {
+  background: #14532d;
+}
+
+.heatmap-cell.neg {
+  background: #7f1d1d;
+}
+
+.heatmap-cell.zero {
+  background: #1a2330;
+}
+
+.heatmap-cell.picked {
+  outline: 2px solid var(--sky);
+}
+
+.heatmap-cell:not(.empty):hover {
+  outline: 1px solid var(--sky);
+  cursor: pointer;
+}

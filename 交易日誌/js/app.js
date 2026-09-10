@@ -23,6 +23,16 @@
     openDayJournalDate: null, // "YYYY-MM-DD" | null — 當日日誌 overlay (also opened from 心理戰)
     mindGameErrorsForCard: [], // errors from the 心理遊戲 add-form inside 交易報告卡 detail
     mindGameErrorsForDay: [], // errors from the 心理遊戲 add-form inside 當日日誌
+
+    // ---- 分解表與時段熱力圖聯動 (ticket 16) ------------------------------
+    // Ephemeral, separate from state.filters (ticket 14's primary filter
+    // bar). Never mutates state.filters, never affects hero stats/equity
+    // curve, and 損益月曆 never touches it. See renderLinkedSection() below.
+    breakdownDimension: "all", // "all" | "setup" | "product" | "grade"
+    // null, or { kind:"breakdown", dimension, key } / { kind:"heatmap", weekday, hour }
+    secondarySelection: null,
+    breakdownSort: { col: "cumulativeEquity", dir: "desc" }, // display-only re-sort of store's rows
+    tradeSort: { col: "time", dir: "desc" },
   };
 
   var app = document.getElementById("app");
@@ -233,49 +243,243 @@
       renderEquityCurve(stats.equityCurve) +
       "</div>";
 
-    var sorted = stats.cards.slice().sort(function (a, b) {
-      var ak = a.dateET + " " + a.timeET;
-      var bk = b.dateET + " " + b.timeET;
-      return bk.localeCompare(ak);
-    });
-
-    var rows = sorted
-      .map(function (c) {
-        return (
-          '<tr class="clickable' + (c.isDemo ? " demo-row" : "") + '" data-card-id="' + escapeHtml(c.id) + '">' +
-          "<td>" + escapeHtml(c.dateET) + " " + escapeHtml(c.timeET) + "</td>" +
-          "<td>" + escapeHtml(c.product) + "</td>" +
-          "<td>" + escapeHtml(c.setup) + "</td>" +
-          "<td>" + escapeHtml(accountName(c.accountId, accounts)) + "</td>" +
-          "<td>" + escapeHtml(c.side) + "</td>" +
-          "<td>" + c.size + "</td>" +
-          "<td>" + escapeHtml(c.grade) + "</td>" +
-          "<td>" + escapeHtml(c.execGrade) + "</td>" +
-          "<td>" + money(c.pnl) + "</td>" +
-          "<td>" + money(store.netPnlOf(c)) + "</td>" +
-          "</tr>"
-        );
-      })
-      .join("");
-
-    var table = sorted.length
-      ? '<div class="scroll"><table class="grid"><tr>' +
-        "<th>美東時間</th><th>商品</th><th>setup</th><th>帳戶</th><th>方向</th><th>口數</th><th>成績</th><th>執行</th><th>平倉損益</th><th>淨損益</th>" +
-        "</tr>" + rows + "</table></div>"
-      : '<p class="muted">這個篩選沒有交易報告卡</p>';
-
     return (
       banner +
       renderFilterBar() +
       '<div class="heroes">' + heroes + "</div>" +
       equityPanel +
       renderCalendar() +
+      renderLinkedSection(stats, accounts)
+    );
+  }
+
+  // ---- 分解表 · 時段熱力圖 · 交易報告卡清單 (ticket 16, "linked selection") --
+  //
+  // Three views of ONE shared ephemeral selection (state.secondarySelection),
+  // kept deliberately separate from ticket 14's primary filter bar:
+  //   - it is never written into state.filters
+  //   - it never affects the hero stats or equity curve above (those only
+  //     ever read state.filters, via stats = getCommandCenterStats(state.filters)
+  //     computed in renderCommandCenter — this section only narrows further,
+  //     downstream of that)
+  //   - 損益月曆 above stays untouched by it, per existing behavior
+  //
+  // Clicking a breakdown row or a heatmap cell narrows the OTHER TWO views;
+  // the view that originated the click keeps showing the full
+  // primary-filtered set (highlighting the picked row/cell) rather than
+  // collapsing into itself — this is what lets you compare rows/cells while
+  // one of them is selected. This whole section is appended as one
+  // self-contained function so it can be lifted/merged without touching the
+  // equity-curve or day-journal code above it (owned by tickets 20 / 17+19).
+
+  var BREAKDOWN_DIMENSIONS = [
+    ["all", "全部"],
+    ["setup", "setup 標"],
+    ["product", "商品"],
+    ["grade", "成績"],
+  ];
+
+  var BREAKDOWN_COLUMNS = [
+    ["title", "標題"],
+    ["count", "筆數"],
+    ["winRate", "勝率"],
+    ["expectancy", "期望值"],
+    ["avgWin", "平均賺"],
+    ["avgLoss", "平均賠"],
+    ["profitFactor", "賺賠比"],
+    ["rewardRiskRatio", "風報比"],
+    ["cumulativeEquity", "累積權益"],
+  ];
+
+  var TRADE_COLUMNS = [
+    ["time", "時間"],
+    ["account", "帳戶"],
+    ["product", "商品"],
+    ["setup", "setup"],
+    ["side", "方向"],
+    ["size", "口數"],
+    ["grade", "成績"],
+    ["execGrade", "執行"],
+    ["pnl", "損益"],
+  ];
+
+  var WEEKDAY_LABELS_SHORT = ["日", "一", "二", "三", "四", "五", "六"];
+
+  // Narrows a primary-filtered card list down to the current linked
+  // selection. Returns the input unchanged when there is no selection.
+  function narrowCardsBySelection(cards, selection) {
+    if (!selection) return cards;
+    if (selection.kind === "breakdown") {
+      if (selection.dimension === "grade") return cards.filter(function (c) { return c.grade === selection.key; });
+      if (selection.dimension === "setup") return cards.filter(function (c) { return c.setup === selection.key; });
+      if (selection.dimension === "product") return cards.filter(function (c) { return c.product === selection.key; });
+      return cards;
+    }
+    if (selection.kind === "heatmap") {
+      return cards.filter(function (c) {
+        return window.TradingJournal.weekdayOfDateET(c.dateET) === selection.weekday &&
+          parseInt(c.timeET.slice(0, 2), 10) === selection.hour;
+      });
+    }
+    return cards;
+  }
+
+  // Generic display-only sort (headers are clickable; the store always
+  // hands back its own default order, e.g. 累積權益 descending for
+  // breakdown rows, 時間 descending is applied here for the trade list).
+  function sortRows(rows, col, dir, valueFn) {
+    var factor = dir === "asc" ? 1 : -1;
+    return rows.slice().sort(function (a, b) {
+      var av = valueFn(a, col);
+      var bv = valueFn(b, col);
+      if (av === null || av === undefined) av = -Infinity;
+      if (bv === null || bv === undefined) bv = -Infinity;
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * factor;
+      return String(av).localeCompare(String(bv), "zh") * factor;
+    });
+  }
+
+  function renderBreakdownTable(rows, dimension, selection, sort) {
+    var sorted = sortRows(rows, sort.col, sort.dir, function (row, col) { return row[col]; });
+
+    var heads = BREAKDOWN_COLUMNS.map(function (colDef) {
+      var col = colDef[0];
+      var mark = sort.col === col ? (sort.dir === "asc" ? " ↑" : " ↓") : "";
+      return '<th class="sortable" data-breakdown-sort="' + col + '">' + escapeHtml(colDef[1]) + mark + "</th>";
+    }).join("");
+
+    var body = sorted.map(function (row) {
+      var picked = selection && selection.kind === "breakdown" &&
+        selection.dimension === dimension && selection.key === row.key;
+      var attrs = dimension === "all"
+        ? 'data-breakdown-clear="1"'
+        : 'data-breakdown-dim="' + escapeHtml(dimension) + '" data-breakdown-key="' + escapeHtml(row.key) + '"';
+      return (
+        '<tr class="clickable' + (picked ? " picked" : "") + '" ' + attrs + '>' +
+        "<td>" + escapeHtml(row.title) + "</td>" +
+        "<td>" + row.count + "</td>" +
+        "<td>" + pct(row.winRate) + "</td>" +
+        "<td>" + money(row.expectancy) + "</td>" +
+        "<td>" + money(row.avgWin) + "</td>" +
+        "<td>" + money(row.avgLoss) + "</td>" +
+        "<td>" + num(row.profitFactor) + "</td>" +
+        "<td>" + num(row.rewardRiskRatio) + "</td>" +
+        "<td>" + money(row.cumulativeEquity) + "</td>" +
+        "</tr>"
+      );
+    }).join("");
+
+    return '<div class="scroll"><table class="grid"><tr>' + heads + "</tr>" + body + "</table></div>";
+  }
+
+  function renderHeatmap(grid, selection) {
+    var out = '<div class="scroll"><div class="heatmap-grid">';
+    out += '<div class="heatmap-hd corner"></div>';
+    for (var h = 0; h < 24; h++) out += '<div class="heatmap-hd">' + h + "</div>";
+    for (var wd = 0; wd < 7; wd++) {
+      out += '<div class="heatmap-wd">' + WEEKDAY_LABELS_SHORT[wd] + "</div>";
+      for (var h2 = 0; h2 < 24; h2++) {
+        var cell = grid[wd][h2];
+        var cls = "heatmap-cell";
+        if (cell.count === 0) cls += " empty";
+        else if (cell.netPnl > 0) cls += " pos";
+        else if (cell.netPnl < 0) cls += " neg";
+        else cls += " zero";
+        if (selection && selection.kind === "heatmap" && selection.weekday === wd && selection.hour === h2) {
+          cls += " picked";
+        }
+        var text = cell.count === 0 ? "" : (cell.netPnl === 0 ? "0" : String(Math.round(cell.netPnl)));
+        var title = "週" + WEEKDAY_LABELS_SHORT[wd] + " " + h2 + "時 · " +
+          (cell.count === 0 ? "沒有交易" : cell.count + " 筆 · 淨損益 " + cell.netPnl);
+        out += '<button type="button" class="' + cls + '" data-heat-wd="' + wd + '" data-heat-hour="' + h2 +
+          '" title="' + escapeHtml(title) + '">' + text + "</button>";
+      }
+    }
+    out += "</div></div>";
+    return out;
+  }
+
+  function tradeSortValue(card, col, accounts) {
+    switch (col) {
+      case "time": return card.dateET + " " + card.timeET;
+      case "account": return accountName(card.accountId, accounts);
+      case "product": return card.product;
+      case "setup": return card.setup;
+      case "side": return card.side;
+      case "size": return card.size;
+      case "grade": return card.grade;
+      case "execGrade": return card.execGrade;
+      case "pnl": return store.netPnlOf(card);
+      default: return "";
+    }
+  }
+
+  function renderLinkedTradeTable(cards, accounts, sort) {
+    if (!cards.length) return '<p class="muted">這個篩選沒有交易報告卡</p>';
+
+    var sorted = sortRows(cards, sort.col, sort.dir, function (c, col) { return tradeSortValue(c, col, accounts); });
+
+    var heads = TRADE_COLUMNS.map(function (colDef) {
+      var col = colDef[0];
+      var mark = sort.col === col ? (sort.dir === "asc" ? " ↑" : " ↓") : "";
+      return '<th class="sortable" data-trade-sort="' + col + '">' + escapeHtml(colDef[1]) + mark + "</th>";
+    }).join("");
+
+    var rows = sorted.map(function (c) {
+      return (
+        '<tr class="clickable' + (c.isDemo ? " demo-row" : "") + '" data-card-id="' + escapeHtml(c.id) + '">' +
+        "<td>" + escapeHtml(c.dateET) + " " + escapeHtml(c.timeET) + "</td>" +
+        "<td>" + escapeHtml(accountName(c.accountId, accounts)) + "</td>" +
+        "<td>" + escapeHtml(c.product) + "</td>" +
+        "<td>" + escapeHtml(c.setup) + "</td>" +
+        "<td>" + escapeHtml(c.side) + "</td>" +
+        "<td>" + c.size + "</td>" +
+        "<td>" + escapeHtml(c.grade) + "</td>" +
+        "<td>" + escapeHtml(c.execGrade) + "</td>" +
+        "<td>" + money(store.netPnlOf(c)) + "</td>" +
+        "</tr>"
+      );
+    }).join("");
+
+    return '<div class="scroll"><table class="grid"><tr>' + heads + "</tr>" + rows + "</table></div>";
+  }
+
+  function renderLinkedSection(stats, accounts) {
+    var selection = state.secondarySelection;
+    var narrowed = narrowCardsBySelection(stats.cards, selection);
+    // The view that originated the click stays on the full primary-filtered
+    // set; the other two use the narrowed set. With no selection, narrowed
+    // === stats.cards, so all three agree anyway.
+    var breakdownCards = (selection && selection.kind === "breakdown") ? stats.cards : narrowed;
+    var heatmapCards = (selection && selection.kind === "heatmap") ? stats.cards : narrowed;
+    var tradeCards = narrowed;
+
+    var startingCapitalOrNull = stats.mode === "single" ? stats.startingCapital : null;
+    var breakdownRows = store.getBreakdownForCards(breakdownCards, state.breakdownDimension, startingCapitalOrNull);
+    var heatmapGrid = store.getHeatmapForCards(heatmapCards).grid;
+
+    var dimChips = BREAKDOWN_DIMENSIONS.map(function (d) {
+      return '<button type="button" class="chip' + (state.breakdownDimension === d[0] ? " on" : "") +
+        '" data-breakdown-dim-select="' + d[0] + '">' + escapeHtml(d[1]) + "</button>";
+    }).join("");
+
+    var clearBtn = selection
+      ? '<button type="button" class="ghost" id="clear-secondary-selection-btn">清除這三件的篩選</button>'
+      : "";
+
+    return (
       '<div class="panel">' +
       '<div class="row" style="justify-content:space-between">' +
-      "<h2>交易報告卡</h2>" +
+      "<h2>分解表 · 時段熱力圖 · 交易報告卡</h2>" +
       '<button class="primary" id="new-card-btn">新增交易報告卡</button>' +
       "</div>" +
-      table +
+      '<p class="muted">點分解表列或熱力圖格，另外兩件跟著變；損益月曆不受影響。</p>' +
+      '<div class="row">' + dimChips + clearBtn + "</div>" +
+      renderBreakdownTable(breakdownRows, state.breakdownDimension, selection, state.breakdownSort) +
+      '<p class="muted" style="margin:10px 0 4px">時段熱力圖（美東星期 × 小時）</p>' +
+      renderHeatmap(heatmapGrid, selection) +
+      '<h3 style="margin-top:16px">交易報告卡</h3>' +
+      renderLinkedTradeTable(tradeCards, accounts, state.tradeSort) +
       "</div>"
     );
   }
@@ -1054,6 +1258,7 @@
     if (filterAccount) {
       filterAccount.addEventListener("change", function (e) {
         state.filters.accountId = e.currentTarget.value;
+        state.secondarySelection = null; // primary filter changed: ticket 16's linked selection resets
         render();
       });
     }
@@ -1061,6 +1266,7 @@
     if (filterProduct) {
       filterProduct.addEventListener("change", function (e) {
         state.filters.product = e.currentTarget.value;
+        state.secondarySelection = null;
         render();
       });
     }
@@ -1068,6 +1274,7 @@
     if (filterSetup) {
       filterSetup.addEventListener("change", function (e) {
         state.filters.setup = e.currentTarget.value;
+        state.secondarySelection = null;
         render();
       });
     }
@@ -1075,6 +1282,7 @@
     if (filterFrom) {
       filterFrom.addEventListener("change", function (e) {
         state.filters.dateFrom = e.currentTarget.value || null;
+        state.secondarySelection = null;
         render();
       });
     }
@@ -1082,6 +1290,7 @@
     if (filterTo) {
       filterTo.addEventListener("change", function (e) {
         state.filters.dateTo = e.currentTarget.value || null;
+        state.secondarySelection = null;
         render();
       });
     }
@@ -1089,6 +1298,94 @@
     if (filterClearBtn) {
       filterClearBtn.addEventListener("click", function () {
         state.filters = store.createDefaultFilters();
+        state.secondarySelection = null;
+        render();
+      });
+    }
+
+    // ---- 分解表 · 時段熱力圖 · 交易報告卡清單聯動 (ticket 16) -----------------
+
+    var dimBtns = app.querySelectorAll("[data-breakdown-dim-select]");
+    for (var db = 0; db < dimBtns.length; db++) {
+      dimBtns[db].addEventListener("click", function (e) {
+        state.breakdownDimension = e.currentTarget.getAttribute("data-breakdown-dim-select");
+        render();
+      });
+    }
+
+    var breakdownSortHeads = app.querySelectorAll("[data-breakdown-sort]");
+    for (var bs = 0; bs < breakdownSortHeads.length; bs++) {
+      breakdownSortHeads[bs].addEventListener("click", function (e) {
+        var col = e.currentTarget.getAttribute("data-breakdown-sort");
+        if (state.breakdownSort.col === col) {
+          state.breakdownSort.dir = state.breakdownSort.dir === "asc" ? "desc" : "asc";
+        } else {
+          state.breakdownSort.col = col;
+          state.breakdownSort.dir = col === "title" ? "asc" : "desc";
+        }
+        render();
+      });
+    }
+
+    // Rows for dimensions other than "全部" toggle the shared linked
+    // selection on/off; clicking the single "全部" row instead clears it
+    // (mirrors clicking the dedicated clear button).
+    var breakdownRowEls = app.querySelectorAll("[data-breakdown-dim][data-breakdown-key]");
+    for (var br = 0; br < breakdownRowEls.length; br++) {
+      breakdownRowEls[br].addEventListener("click", function (e) {
+        var dimension = e.currentTarget.getAttribute("data-breakdown-dim");
+        var key = e.currentTarget.getAttribute("data-breakdown-key");
+        var cur = state.secondarySelection;
+        if (cur && cur.kind === "breakdown" && cur.dimension === dimension && cur.key === key) {
+          state.secondarySelection = null;
+        } else {
+          state.secondarySelection = { kind: "breakdown", dimension: dimension, key: key };
+        }
+        render();
+      });
+    }
+
+    var breakdownClearRows = app.querySelectorAll("[data-breakdown-clear]");
+    for (var bc = 0; bc < breakdownClearRows.length; bc++) {
+      breakdownClearRows[bc].addEventListener("click", function () {
+        state.secondarySelection = null;
+        render();
+      });
+    }
+
+    var heatCells = app.querySelectorAll("[data-heat-wd]");
+    for (var hc = 0; hc < heatCells.length; hc++) {
+      heatCells[hc].addEventListener("click", function (e) {
+        var wd = parseInt(e.currentTarget.getAttribute("data-heat-wd"), 10);
+        var hour = parseInt(e.currentTarget.getAttribute("data-heat-hour"), 10);
+        var cur = state.secondarySelection;
+        if (cur && cur.kind === "heatmap" && cur.weekday === wd && cur.hour === hour) {
+          state.secondarySelection = null;
+        } else {
+          state.secondarySelection = { kind: "heatmap", weekday: wd, hour: hour };
+        }
+        render();
+      });
+    }
+
+    var clearSecondaryBtn = document.getElementById("clear-secondary-selection-btn");
+    if (clearSecondaryBtn) {
+      clearSecondaryBtn.addEventListener("click", function () {
+        state.secondarySelection = null;
+        render();
+      });
+    }
+
+    var tradeSortHeads = app.querySelectorAll("[data-trade-sort]");
+    for (var ts = 0; ts < tradeSortHeads.length; ts++) {
+      tradeSortHeads[ts].addEventListener("click", function (e) {
+        var col = e.currentTarget.getAttribute("data-trade-sort");
+        if (state.tradeSort.col === col) {
+          state.tradeSort.dir = state.tradeSort.dir === "asc" ? "desc" : "asc";
+        } else {
+          state.tradeSort.col = col;
+          state.tradeSort.dir = "desc";
+        }
         render();
       });
     }
