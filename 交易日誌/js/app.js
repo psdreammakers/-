@@ -8,18 +8,21 @@
   var store = window.TradingJournal.createDefaultStore();
   var GRADES = window.TradingJournal.GRADES;
   var SIDES = window.TradingJournal.SIDES;
+  var MIND_GAME_TYPES = window.TradingJournal.MIND_GAME_TYPES;
 
   var state = {
     tab: "cmd", // "cmd" | "psych"
     formOpen: false,
     formErrors: [],
-    openCardId: null, // set when a trade report card's detail view is open (also opened from 當日日誌)
+    openCardId: null, // set when a trade report card's detail view is open (also opened from 當日日誌 or 心理戰)
     detailErrors: [],
     filters: store.createDefaultFilters(),
     settingsOpen: false,
     settingsErrors: [],
     calendarMonth: currentMonthET(), // "YYYY-MM", 損益月曆 shown on 指揮中心
-    openDayJournalDate: null, // "YYYY-MM-DD" | null — 當日日誌 overlay
+    openDayJournalDate: null, // "YYYY-MM-DD" | null — 當日日誌 overlay (also opened from 心理戰)
+    mindGameErrorsForCard: [], // errors from the 心理遊戲 add-form inside 交易報告卡 detail
+    mindGameErrorsForDay: [], // errors from the 心理遊戲 add-form inside 當日日誌
   };
 
   var app = document.getElementById("app");
@@ -420,7 +423,26 @@
       "</form>" +
       '<h3 style="margin-top:16px">當天交易報告卡</h3>' +
       tradeTable +
+      renderDayMindGameSection(dateET) +
       "</div>" +
+      "</div>"
+    );
+  }
+
+  // 心理遊戲 bound directly to THIS 交易日 (ticket 19) — a separate, appended
+  // block. Deliberately not interleaved with the background/盤前/盤後/trade-
+  // list markup above (ticket 17 appends its own 經濟事件 block the same
+  // way; a later merge combines both as separate sections). Entries bound to
+  // a specific trade card, not the day itself, are NOT listed here — they
+  // already show up from this same day's trade list -> that card's own
+  // detail view, which is where they live (one binding, one place).
+  function renderDayMindGameSection(dateET) {
+    var entries = store.getMindGameEntriesForDate(dateET);
+    return (
+      '<div class="mindgame-section">' +
+      '<h3 style="margin-top:16px">心理遊戲（綁當天）</h3>' +
+      renderMindGameList(entries, { emptyText: "這天還沒有綁當天的心理遊戲（有對應交易的心理遊戲記在那張報告卡上）" }) +
+      renderMindGameForm("day", state.mindGameErrorsForDay) +
       "</div>"
     );
   }
@@ -611,6 +633,16 @@
         "</div>";
     }
 
+    // 心理遊戲 bound to THIS card (ticket 19) — a separate section, appended
+    // after screenshots. Demo cards are read-only, same as screenshots.
+    var mindGameEntries = store.getMindGameEntriesForCard(card.id);
+    var mindGameSection =
+      '<h3 style="margin-top:16px">心理遊戲</h3>' +
+      renderMindGameList(mindGameEntries, { emptyText: "這張報告卡還沒有心理遊戲紀錄" }) +
+      (card.isDemo
+        ? '<p class="muted">示範資料不可記心理遊戲。</p>'
+        : renderMindGameForm("card", state.mindGameErrorsForCard));
+
     return (
       '<div class="overlay" id="detail-overlay">' +
       '<div class="sheet">' +
@@ -620,6 +652,7 @@
       '<h3 style="margin-top:16px">截圖</h3>' +
       shotsHtml +
       addHtml +
+      mindGameSection +
       '<p class="row" style="margin-top:14px">' +
       '<button type="button" class="ghost" id="close-detail-btn">關閉</button>' +
       "</p>" +
@@ -719,13 +752,100 @@
     reader.readAsDataURL(file);
   }
 
-  // ---- psychology stub -------------------------------------------------
+  // ---- 心理遊戲 (mind game) shared rendering (ticket 19) -----------------
+  //
+  // One store, three doors: a 交易報告卡's own detail view (bound entries for
+  // that card), 當日日誌 (bound entries for that day), and this 心理戰 tab
+  // (every entry, browsable). renderMindGameList/-Form are shared by all
+  // three so a card-bound and a day-bound entry render identically wherever
+  // they show up.
+
+  function renderMindGameList(entries, opts) {
+    opts = opts || {};
+    if (!entries.length) {
+      return '<p class="muted">' + escapeHtml(opts.emptyText || "還沒有心理遊戲紀錄") + "</p>";
+    }
+    var rows = entries
+      .map(function (e) {
+        var binding = "";
+        var attrs = "";
+        if (opts.showBinding) {
+          if (e.cardId) {
+            var card = store.getCardById(e.cardId);
+            binding = card
+              ? escapeHtml(card.dateET) + " " + escapeHtml(card.timeET) + " · " + escapeHtml(card.product) + "（報告卡）"
+              : "（報告卡已不存在）";
+            attrs = ' data-card-id="' + escapeHtml(e.cardId) + '"';
+          } else {
+            binding = escapeHtml(e.dateET) + "（當天）";
+            attrs = ' data-open-day-date="' + escapeHtml(e.dateET) + '"';
+          }
+        }
+        return (
+          '<li class="mindgame-item' + (opts.showBinding ? " clickable" : "") + '"' + attrs + ">" +
+          '<div class="mindgame-head">' +
+          '<span class="mindgame-type">' + escapeHtml(e.type) + "</span>" +
+          '<span class="mindgame-intensity">強度 ' + e.intensity + "/10</span>" +
+          (binding ? '<span class="mindgame-binding">' + binding + "</span>" : "") +
+          "</div>" +
+          (e.note ? '<div class="mindgame-note">' + escapeHtml(e.note) + "</div>" : "") +
+          "</li>"
+        );
+      })
+      .join("");
+    return '<ul class="mindgame-list">' + rows + "</ul>";
+  }
+
+  // kind: "card" | "day" — decides which state error-list this form reports
+  // into and which binding wire() attaches on submit (state.openCardId or
+  // state.openDayJournalDate — read at submit time, not carried as a hidden
+  // field, since the surrounding overlay already fixes that context).
+  function renderMindGameForm(kind, errors) {
+    var errorsHtml = errors && errors.length
+      ? '<div class="form-errors"><ul>' + errors.map(function (e) { return "<li>" + escapeHtml(e) + "</li>"; }).join("") + "</ul></div>"
+      : "";
+    return (
+      errorsHtml +
+      '<form class="mindgame-form" data-mindgame-form="' + kind + '">' +
+      '<div class="field-grid">' +
+      '<label>類型 <span class="req">*</span><select name="type" required>' + optionsHtml(MIND_GAME_TYPES) + "</select></label>" +
+      '<label>強度（1–10） <span class="req">*</span><input type="number" name="intensity" min="1" max="10" step="1" value="5" required></label>' +
+      '<label class="full">一句說明（選「其他」時必填）<input type="text" name="note" maxlength="120"></label>' +
+      "</div>" +
+      '<p class="row" style="margin-top:8px"><button type="submit" class="primary">新增心理遊戲</button></p>' +
+      "</form>"
+    );
+  }
+
+  function readMindGameFormInput(form) {
+    var fd = new FormData(form);
+    var intensityRaw = fd.get("intensity");
+    return {
+      type: fd.get("type"),
+      intensity: intensityRaw === null || intensityRaw === "" ? undefined : parseInt(intensityRaw, 10),
+      note: fd.get("note"),
+    };
+  }
+
+  // ---- 心理戰 tab: browse ALL 心理遊戲 entries (card- and day-bound) -------
+  //
+  // The previously-stub tab from ticket 13. Every entry is reachable from
+  // here — clicking a card-bound row opens that card's detail (same overlay
+  // the 指揮中心 list and 當日日誌 open), clicking a day-bound row opens that
+  // day's 當日日誌. This tab does not itself write entries — writing happens
+  // where the context (which card, which day) is already established.
 
   function renderPsych() {
+    var entries = store.getAllMindGameEntries();
+    var body = entries.length
+      ? renderMindGameList(entries, { showBinding: true })
+      : '<p class="muted">還沒有任何心理遊戲紀錄。情緒劫持決策時，從交易報告卡或當日日誌記下第一則。</p>';
+
     return (
       '<div class="panel">' +
       "<h2>心理戰</h2>" +
-      '<p class="muted">心理戰本還在建置中，之後可以在這裡記錄劫持決策的心理遊戲。</p>' +
+      '<p class="muted">只在情緒劫持決策時才記，不是每日心情日記。點一列走進那張報告卡或那天的當日日誌。</p>' +
+      body +
       "</div>"
     );
   }
@@ -777,6 +897,8 @@
         state.openCardId = null;
         state.settingsOpen = false;
         state.openDayJournalDate = null;
+        state.mindGameErrorsForCard = [];
+        state.mindGameErrorsForDay = [];
         render();
       });
     }
@@ -805,6 +927,7 @@
         // closing the detail lands back on the day journal.
         state.openCardId = e.currentTarget.getAttribute("data-card-id");
         state.detailErrors = [];
+        state.mindGameErrorsForCard = [];
         state.formOpen = false;
         state.settingsOpen = false;
         render();
@@ -816,6 +939,7 @@
       closeDetailBtn.addEventListener("click", function () {
         state.openCardId = null;
         state.detailErrors = [];
+        state.mindGameErrorsForCard = [];
         render();
       });
     }
@@ -971,6 +1095,22 @@
         state.openCardId = null;
         state.formOpen = false;
         state.settingsOpen = false;
+        state.mindGameErrorsForDay = [];
+        render();
+      });
+    }
+
+    // Same "open 當日日誌" behavior as a 損益月曆 day cell, but triggered from
+    // a day-bound 心理遊戲 row on the 心理戰 tab (ticket 19) — one of the
+    // three doors into that data.
+    var openDayDateEls = app.querySelectorAll("[data-open-day-date]");
+    for (var od = 0; od < openDayDateEls.length; od++) {
+      openDayDateEls[od].addEventListener("click", function (e) {
+        state.openDayJournalDate = e.currentTarget.getAttribute("data-open-day-date");
+        state.openCardId = null;
+        state.formOpen = false;
+        state.settingsOpen = false;
+        state.mindGameErrorsForDay = [];
         render();
       });
     }
@@ -985,6 +1125,8 @@
         state.formOpen = false;
         state.openCardId = null;
         state.openDayJournalDate = null;
+        state.mindGameErrorsForCard = [];
+        state.mindGameErrorsForDay = [];
         render();
       });
     }
@@ -1056,6 +1198,7 @@
     if (closeDayJournalBtn) {
       closeDayJournalBtn.addEventListener("click", function () {
         state.openDayJournalDate = null;
+        state.mindGameErrorsForDay = [];
         render();
       });
     }
@@ -1065,6 +1208,31 @@
         e.preventDefault();
         var input = readDayJournalFormInput(dayJournalForm);
         store.setDayJournal(state.openDayJournalDate, input);
+        render();
+      });
+    }
+
+    // ---- 心理遊戲 add-forms (ticket 19) — shared by card detail & 當日日誌 --
+    //
+    // kind "card" binds to state.openCardId (the card detail this form is
+    // rendered inside of); kind "day" binds to state.openDayJournalDate.
+    // Both overlays are mutually exclusive with each other's context, so the
+    // currently-open id/date is always the right binding to attach.
+    var mindGameForms = app.querySelectorAll("[data-mindgame-form]");
+    for (var mg = 0; mg < mindGameForms.length; mg++) {
+      mindGameForms[mg].addEventListener("submit", function (e) {
+        e.preventDefault();
+        var kind = e.currentTarget.getAttribute("data-mindgame-form");
+        var input = readMindGameFormInput(e.currentTarget);
+        if (kind === "card") input.cardId = state.openCardId;
+        else input.dateET = state.openDayJournalDate;
+
+        var result = store.addMindGameEntry(input);
+        if (kind === "card") {
+          state.mindGameErrorsForCard = result.ok ? [] : result.errors;
+        } else {
+          state.mindGameErrorsForDay = result.ok ? [] : result.errors;
+        }
         render();
       });
     }
