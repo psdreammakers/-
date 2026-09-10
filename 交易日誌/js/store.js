@@ -73,6 +73,49 @@
  *                                   changeTomorrow } for that 交易日 — always a valid empty shape if unsaved
  *   store.setDayJournal(d, f)  -> { ok:true, journal } | { ok:false, errors:string[] } (upserts whole record)
  *
+ *   -- 分解表與時段熱力圖 (ticket 16) --
+ *   store.weekdayOfDateET(dateET) -> 0..6 (0=Sun), weekday of a card's 美東日期 (a plain calendar
+ *     date string, no timezone math needed — dateET already IS the America/New_York date).
+ *
+ *   store.getBreakdown(filters, dimension) -> row[]
+ *     dimension: "all" | "setup" | "product" | "grade". Runs over the SAME card set
+ *     getCommandCenterStats(filters).cards exposes (i.e. ticket 14's primary filters: account/
+ *     product/setup/date-range). "all" -> one row. "setup"/"product" -> one row per DISTINCT
+ *     value actually present among those cards (absent values get no row). "grade" -> always
+ *     exactly 4 rows, fixed as ["A","B","C","D"], present even at zero count (a card graded E/F
+ *     simply appears in none of the 4 rows — 成績 field itself stays A–F, this table just never
+ *     shows a 5th/6th row). Each row: { key, title, count, winRate, expectancy, avgWin, avgLoss,
+ *     profitFactor, rewardRiskRatio, netPnl, cumulativeEquity }. cumulativeEquity = that row's
+ *     netPnl, plus the account's 初始資金 when filters.accountId is a single account (mode:
+ *     "single"); under 全部帳戶 there is no combined starting capital to add (same hard rule as
+ *     目前權益), so cumulativeEquity there is just the row's netPnl. Rows are returned pre-sorted
+ *     by cumulativeEquity descending (the table's default sort) — re-sorting by another column is
+ *     a display-only concern for the UI layer, not the store.
+ *
+ *   store.getBreakdownForCards(cards, dimension, startingCapitalOrNull) -> row[]
+ *     Same shape/logic as getBreakdown, but over a caller-supplied card list instead of re-deriving
+ *     it from filters. This is what lets the UI recompute breakdown rows against an ephemeral,
+ *     further-narrowed subset (see below) without duplicating the grouping/stat math.
+ *
+ *   store.getHeatmap(filters) -> { grid } where grid[weekday][hour] = { count, netPnl }
+ *     weekday 0..6 (0=Sun), hour 0..23, full 24h (not clipped to RTH — MNQ/MES trade nearly
+ *     around the clock). Over the same getCommandCenterStats(filters).cards set as getBreakdown.
+ *     count===0 means no card fell in that slot — render that as a blank cell, NOT "0". netPnl is
+ *     `null` exactly when count===0; once count>=1, netPnl is the real (possibly-zero) summed net
+ *     P&L, and a slot whose cards sum to exactly 0 must be shown as "0" — these two states are
+ *     deliberately distinguishable in the data (null vs 0), not just in some UI heuristic.
+ *
+ *   store.getHeatmapForCards(cards) -> { grid } — same shape, over a caller-supplied card list.
+ *
+ *   Design note on "linked selection" (the ephemeral state that ties 分解表, the 熱力圖, and the
+ *   交易報告卡清單 together on 指揮中心): the store has NO notion of this selection at all — it is
+ *   pure UI state living in app.js (see state.secondarySelection there), never written into
+ *   state.filters, never touching getCommandCenterStats. The UI narrows the primary-filtered card
+ *   list down to the current selection itself (in app.js), then hands that narrowed list to
+ *   getBreakdownForCards/getHeatmapForCards to redraw the two views that did NOT originate the
+ *   click; the view that originated the click keeps showing the full primary-filtered set (with
+ *   the picked row/cell highlighted) rather than collapsing into itself.
+ *
  * Design note: demo data is never written to storage. It is a constant that
  * getCards() returns only while getRealCards() is empty. The moment one real
  * card is saved, demo data is gone by construction — there is nothing to
@@ -681,6 +724,116 @@
         });
     }
 
+    // ---- 分解表與時段熱力圖 (ticket 16) -----------------------------------
+    //
+    // Pure aggregation over an already-decided card list — no DOM, no state
+    // of its own (the ephemeral "linked selection" that narrows this list
+    // lives entirely in the UI layer; see module doc above).
+
+    var BREAKDOWN_GRADES = ["A", "B", "C", "D"];
+
+    function distinctValuesInOrder(cards, field) {
+      var seen = Object.create(null);
+      var out = [];
+      for (var i = 0; i < cards.length; i++) {
+        var v = cards[i][field];
+        if (!seen[v]) {
+          seen[v] = true;
+          out.push(v);
+        }
+      }
+      return out;
+    }
+
+    function breakdownGroups(cards, dimension) {
+      if (dimension === "grade") {
+        return BREAKDOWN_GRADES.map(function (g) {
+          return { key: g, title: g, cards: cards.filter(function (c) { return c.grade === g; }) };
+        });
+      }
+      if (dimension === "setup") {
+        return distinctValuesInOrder(cards, "setup").map(function (s) {
+          return { key: s, title: s, cards: cards.filter(function (c) { return c.setup === s; }) };
+        });
+      }
+      if (dimension === "product") {
+        return distinctValuesInOrder(cards, "product").map(function (p) {
+          return { key: p, title: p, cards: cards.filter(function (c) { return c.product === p; }) };
+        });
+      }
+      // "all" (and any unrecognized dimension) -> one row, everything.
+      return [{ key: "all", title: "全部", cards: cards }];
+    }
+
+    function computeBreakdownRows(cards, dimension, startingCapitalOrNull) {
+      var rows = breakdownGroups(cards, dimension).map(function (g) {
+        var s = computeCardStats(g.cards);
+        var cumulativeEquity = (startingCapitalOrNull === null || startingCapitalOrNull === undefined)
+          ? s.netPnl
+          : startingCapitalOrNull + s.netPnl;
+        return {
+          key: g.key,
+          title: g.title,
+          count: s.count,
+          winRate: s.winRate,
+          expectancy: s.expectancy,
+          avgWin: s.avgWin,
+          avgLoss: s.avgLoss,
+          profitFactor: s.profitFactor,
+          rewardRiskRatio: s.rewardRiskRatio,
+          netPnl: s.netPnl,
+          cumulativeEquity: cumulativeEquity,
+        };
+      });
+      // Default sort: 累積權益 descending.
+      rows.sort(function (a, b) { return b.cumulativeEquity - a.cumulativeEquity; });
+      return rows;
+    }
+
+    function getBreakdown(rawFilters, dimension) {
+      var stats = getCommandCenterStats(rawFilters);
+      var startingCapitalOrNull = stats.mode === "single" ? stats.startingCapital : null;
+      return computeBreakdownRows(stats.cards, dimension, startingCapitalOrNull);
+    }
+
+    function getBreakdownForCards(cards, dimension, startingCapitalOrNull) {
+      return computeBreakdownRows(cards, dimension, startingCapitalOrNull);
+    }
+
+    function weekdayOfDateET(dateET) {
+      var y = parseInt(dateET.slice(0, 4), 10);
+      var m = parseInt(dateET.slice(5, 7), 10);
+      var d = parseInt(dateET.slice(8, 10), 10);
+      return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    }
+
+    function computeHeatmapGrid(cards) {
+      var grid = [];
+      for (var wd = 0; wd < 7; wd++) {
+        var row = [];
+        for (var h = 0; h < 24; h++) row.push({ count: 0, netPnl: null });
+        grid.push(row);
+      }
+      for (var i = 0; i < cards.length; i++) {
+        var c = cards[i];
+        var wd2 = weekdayOfDateET(c.dateET);
+        var hour = parseInt(c.timeET.slice(0, 2), 10);
+        var cell = grid[wd2][hour];
+        cell.netPnl = (cell.netPnl === null ? 0 : cell.netPnl) + netPnlOf(c);
+        cell.count += 1;
+      }
+      return grid;
+    }
+
+    function getHeatmap(rawFilters) {
+      var stats = getCommandCenterStats(rawFilters);
+      return { grid: computeHeatmapGrid(stats.cards) };
+    }
+
+    function getHeatmapForCards(cards) {
+      return { grid: computeHeatmapGrid(cards) };
+    }
+
     // ---- 當日日誌 (day journal) -----------------------------------------
 
     function normalizePlannedSetups(input, setups) {
@@ -770,6 +923,11 @@
       createDefaultFilters: createDefaultFilters,
       getCommandCenterStats: getCommandCenterStats,
       getCardsOnDate: getCardsOnDate,
+      getBreakdown: getBreakdown,
+      getBreakdownForCards: getBreakdownForCards,
+      getHeatmap: getHeatmap,
+      getHeatmapForCards: getHeatmapForCards,
+      weekdayOfDateET: weekdayOfDateET,
       getDayJournal: getDayJournal,
       setDayJournal: setDayJournal,
     };
