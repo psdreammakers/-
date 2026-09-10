@@ -4,22 +4,73 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GoodSheet · 一鍵</title>
-  <link rel="stylesheet" href="../styles.css" />
-  <script src="../config.js"></script>
+  <!-- 2026-08-29 修：本頁用了 Tailwind 的 class，卻沒載入 Tailwind，
+       導致兩顆按鈕掉回瀏覽器預設樣式（線下打開變成藍色裸連結、線上打開變成灰白方塊）。
+       這裡補上 Tailwind 設定，跟 app 本身無關（後者已換成 交易日誌/index.html）。 -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ["ui-sans-serif", "system-ui", "PingFang TC", "Noto Sans TC", "sans-serif"],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="stylesheet" href="../交易日誌/styles.css" />
+  <script src="../交易日誌/config.js"></script>
   <style>
-    body { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+    /* 沒網路時 Tailwind CDN 抓不到，所以按鈕的長相不靠 Tailwind，全部寫死在這裡。 */
+    body {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #020617;
+      color: #e2e8f0;
+      font-family: ui-sans-serif, system-ui, "PingFang TC", "Noto Sans TC", sans-serif;
+    }
     .wrap { width: min(32rem, 100%); }
-    .go { display: block; width: 100%; margin-top: 10px; padding: 14px 16px; border-radius: 12px; text-align: center; font-size: 15px; }
+    .panel {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 24px;
+    }
+    .go {
+      display: block;
+      width: 100%;
+      margin-top: 10px;
+      padding: 14px 16px;
+      border-radius: 12px;
+      text-align: center;
+      font-size: 15px;
+      cursor: pointer;
+      text-decoration: none;
+      box-sizing: border-box;
+      font-family: inherit;
+      line-height: 1.2;
+    }
+    .go-primary { background: #0ea5e9; color: #020617; font-weight: 600; border: 1px solid #0ea5e9; }
+    .go-primary:hover { background: #38bdf8; }
+    .go-ghost { background: transparent; color: #f1f5f9; border: 1px solid #475569; }
+    .go-ghost:hover { border-color: #94a3b8; }
+    .eyebrow { font-size: 12px; letter-spacing: 0.2em; color: rgba(125, 211, 252, 0.8); margin: 0; }
+    .title { margin: 8px 0 0; font-size: 20px; font-weight: 600; }
+    .lead { margin: 8px 0 0; font-size: 14px; color: #94a3b8; }
+    .foot { margin: 16px 0 0; font-size: 12px; color: #64748b; }
   </style>
 </head>
 <body class="font-sans antialiased">
-  <div class="wrap panel rounded-2xl p-6">
-    <p class="text-xs tracking-[0.2em] text-sky-300/80">GOODSHEET</p>
-    <h1 class="mt-2 text-xl font-semibold">一鍵</h1>
-    <p class="mt-2 text-sm text-slate-400">線下是工作檔；線上是上次上架的快照。修正線下不會自動更新線上。</p>
-    <a class="go bg-sky-500 font-semibold text-slate-950" href="../index.html">線下打開</a>
-    <button type="button" id="go-online" class="go border border-slate-600 text-slate-100">線上打開</button>
-    <p class="mt-4 text-xs text-slate-500">線上更新請到「一鍵」資料夾雙擊「線上更新.command」（瀏覽器不能直接上架）。第一次會請你登入 GitHub。</p>
+  <div class="wrap panel">
+    <p class="eyebrow">GOODSHEET</p>
+    <h1 class="title">一鍵</h1>
+    <p class="lead">線下是工作檔；線上是上次上架的快照。修正線下不會自動更新線上。</p>
+    <a class="go go-primary" href="../交易日誌/index.html">線下打開</a>
+    <button type="button" id="go-online" class="go go-ghost">線上打開</button>
+    <p class="foot">線上更新請到「一鍵」資料夾雙擊「線上更新.command」（瀏覽器不能直接上架）。第一次會請你登入 GitHub。</p>
   </div>
   <script>
     document.getElementById("go-online").onclick = () => {
