@@ -24,6 +24,7 @@
     dayJournalTab: "overview", // which 當日日誌 sub-tab is showing; reset to "overview" every time a day is (re)opened
     mindGameErrorsForCard: [], // errors from the 心理遊戲 add-form inside 交易報告卡 detail
     mindGameErrorsForDay: [], // errors from the 心理遊戲 add-form inside 當日日誌
+    processLogErrors: [], // errors from the 過程紀錄 add-form inside 當日日誌's 盤前盤後 tab
 
     // ---- 分解表與時段熱力圖聯動 (ticket 16) ------------------------------
     // Ephemeral, separate from state.filters (ticket 14's primary filter
@@ -608,8 +609,7 @@
   var DAY_JOURNAL_TABS = [
     { key: "overview", label: "總覽" },
     { key: "background", label: "背景" },
-    { key: "premarket", label: "盤前" },
-    { key: "postmarket", label: "盤後" },
+    { key: "process", label: "盤前盤後" },
     { key: "mindgame", label: "心理遊戲" },
     { key: "econ", label: "經濟事件" },
   ];
@@ -641,8 +641,7 @@
 
     var content;
     if (tab === "background") content = renderDayBackgroundTab(store.getDayJournal(dateET));
-    else if (tab === "premarket") content = renderDayPremarketTab(store.getDayJournal(dateET));
-    else if (tab === "postmarket") content = renderDayPostmarketTab(store.getDayJournal(dateET));
+    else if (tab === "process") content = renderDayProcessTab(dateET);
     else if (tab === "mindgame") content = renderDayMindGameSection(dateET);
     else if (tab === "econ") content = renderEconomicEventsSection(dateET);
     else content = renderDayOverviewTab(dateET);
@@ -709,6 +708,7 @@
 
     var mindGameCount = store.getMindGameEntriesForDate(dateET).length;
     var econCount = store.getEconomicEventsForDate(dateET).scheduled.length;
+    var processLogCount = store.getProcessLogEntriesForDate(dateET).length;
 
     function summaryRow(label, value) {
       return '<div class="day-summary-row"><span class="muted">' + escapeHtml(label) + "</span><span>" + value + "</span></div>";
@@ -722,8 +722,9 @@
       "</div>" +
       '<div class="panel" style="margin-bottom:10px">' +
       summaryRow("背景", journal.background ? escapeHtml(journal.background) : '<span class="muted">（未填，見「背景」頁）</span>') +
-      summaryRow("盤前計畫", hasPremarket ? escapeHtml(premarketBits.join("・")) : '<span class="muted">（未填，見「盤前」頁）</span>') +
-      summaryRow("盤後複盤", hasPostmarket ? escapeHtml(postmarketBits.join("・")) : '<span class="muted">（未填，見「盤後」頁）</span>') +
+      summaryRow("盤前計畫", hasPremarket ? escapeHtml(premarketBits.join("・")) : '<span class="muted">（未填，見「盤前盤後」頁）</span>') +
+      summaryRow("盤後複盤", hasPostmarket ? escapeHtml(postmarketBits.join("・")) : '<span class="muted">（未填，見「盤前盤後」頁）</span>') +
+      summaryRow("過程紀錄", processLogCount ? processLogCount + " 則" : '<span class="muted">（沒有，見「盤前盤後」頁）</span>') +
       summaryRow("心理遊戲", mindGameCount ? mindGameCount + " 則" : '<span class="muted">（沒有）</span>') +
       summaryRow("經濟事件", econCount ? econCount + " 則排定" : '<span class="muted">今天沒有排定的官方事件</span>') +
       "</div>" +
@@ -743,7 +744,20 @@
     );
   }
 
-  function renderDayPremarketTab(journal) {
+  // 盤前盤後：ONE tab, two things stacked on it.
+  //   1. The locked short-answer fields (盤前三欄／盤後兩句) — one form, one
+  //      存檔 button. readDayJournalFormInput() already reads whichever of
+  //      the 6 day-journal field names are present in a given form and
+  //      leaves the rest `undefined`, so a form carrying BOTH 盤前's and
+  //      盤後's fields together needs no changes there — the existing
+  //      day-journal-form submit handler (mergeDayJournalInput) already
+  //      does the right thing.
+  //   2. 過程紀錄 (process log) — a separate, append-only list+form for the
+  //      actual back-and-forth of the day (see store.addProcessLogEntry).
+  //      Its own <form>, its own store seam; saving it never touches (and
+  //      is never touched by) 背景/盤前三欄/盤後兩句 above.
+  function renderDayProcessTab(dateET) {
+    var journal = store.getDayJournal(dateET);
     var setups = store.getSetups();
     var setupChecks = setups
       .map(function (s) {
@@ -755,8 +769,9 @@
       })
       .join("");
 
-    return (
+    var fieldsForm =
       '<form id="day-journal-form">' +
+      "<h3>盤前</h3>" +
       '<div class="field-grid">' +
       '<label>風險上限（USD，可空）<input type="number" name="riskCapUsd" step="any" value="' +
       (journal.riskCapUsd === null ? "" : journal.riskCapUsd) + '"></label>' +
@@ -764,21 +779,45 @@
       "</div>" +
       '<p class="muted" style="margin:8px 0 4px">今天只做哪些 setup 標（可多選，只是計畫，不篩限當天能記的交易）</p>' +
       '<div class="row">' + (setupChecks || '<span class="muted">尚無 setup 標</span>') + "</div>" +
-      '<p class="row" style="margin-top:14px"><button type="submit" class="primary">存檔</button></p>' +
-      "</form>"
-    );
-  }
-
-  function renderDayPostmarketTab(journal) {
-    return (
-      '<form id="day-journal-form">' +
+      "<h3>盤後</h3>" +
       '<div class="field-grid">' +
       '<label>做得好的一件（可空）<input type="text" name="didWell" maxlength="120" value="' + escapeHtml(journal.didWell || "") + '"></label>' +
       '<label>明天只改一件（可空）<input type="text" name="changeTomorrow" maxlength="120" value="' + escapeHtml(journal.changeTomorrow || "") + '"></label>' +
       "</div>" +
       '<p class="row" style="margin-top:14px"><button type="submit" class="primary">存檔</button></p>' +
-      "</form>"
+      "</form>";
+
+    return fieldsForm + renderProcessLogSection(dateET);
+  }
+
+  function renderProcessLogSection(dateET) {
+    var entries = store.getProcessLogEntriesForDate(dateET);
+    var list = entries.length
+      ? '<ul class="process-log-list">' +
+        entries.map(function (e) { return '<li class="process-log-item">' + escapeHtml(e.note) + "</li>"; }).join("") +
+        "</ul>"
+      : '<p class="muted">還沒有過程紀錄——想到什麼、做了什麼，隨手記一句。</p>';
+
+    var errorsHtml = state.processLogErrors && state.processLogErrors.length
+      ? '<div class="form-errors"><ul>' + state.processLogErrors.map(function (e) { return "<li>" + escapeHtml(e) + "</li>"; }).join("") + "</ul></div>"
+      : "";
+
+    return (
+      '<div class="process-log-section" style="margin-top:16px">' +
+      "<h3>過程紀錄</h3>" +
+      list +
+      errorsHtml +
+      '<form id="process-log-form">' +
+      '<label class="full">新增一句（記整個過程，一次一句）<input type="text" name="note" maxlength="160"></label>' +
+      '<p class="row" style="margin-top:8px"><button type="submit" class="primary">新增</button></p>' +
+      "</form>" +
+      "</div>"
     );
+  }
+
+  function readProcessLogFormInput(form) {
+    var fd = new FormData(form);
+    return { note: fd.get("note") };
   }
 
   // 心理遊戲 bound directly to THIS 交易日 (ticket 19) — a separate, appended
@@ -918,7 +957,7 @@
 
   function readDayJournalFormInput(form) {
     // Each 當日日誌 sub-tab now renders only ITS OWN fields in this form
-    // (see renderDayBackgroundTab/renderDayPremarketTab/renderDayPostmarketTab),
+    // (see renderDayBackgroundTab/renderDayProcessTab),
     // so most calls only ever see a subset of these names present in the
     // DOM. A field genuinely absent from the form must read back as
     // `undefined` (not "" / [] ), so mergeDayJournalInput can tell "this
@@ -1379,6 +1418,7 @@
         state.dayJournalTab = "overview";
         state.mindGameErrorsForCard = [];
         state.mindGameErrorsForDay = [];
+        state.processLogErrors = [];
         render();
       });
     }
@@ -1670,6 +1710,7 @@
         state.formOpen = false;
         state.settingsOpen = false;
         state.mindGameErrorsForDay = [];
+        state.processLogErrors = [];
         render();
       });
     }
@@ -1686,6 +1727,7 @@
         state.formOpen = false;
         state.settingsOpen = false;
         state.mindGameErrorsForDay = [];
+        state.processLogErrors = [];
         render();
       });
     }
@@ -1749,6 +1791,7 @@
         state.openDayJournalDate = null;
         state.mindGameErrorsForCard = [];
         state.mindGameErrorsForDay = [];
+        state.processLogErrors = [];
         render();
       });
     }
@@ -1821,6 +1864,7 @@
       closeDayJournalBtn.addEventListener("click", function () {
         state.openDayJournalDate = null;
         state.mindGameErrorsForDay = [];
+        state.processLogErrors = [];
         render();
       });
     }
@@ -1834,6 +1878,18 @@
         var partial = readDayJournalFormInput(dayJournalForm);
         var merged = mergeDayJournalInput(state.openDayJournalDate, partial);
         store.setDayJournal(state.openDayJournalDate, merged);
+        render();
+      });
+    }
+
+    var processLogForm = document.getElementById("process-log-form");
+    if (processLogForm) {
+      processLogForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var input = readProcessLogFormInput(processLogForm);
+        input.dateET = state.openDayJournalDate;
+        var result = store.addProcessLogEntry(input);
+        state.processLogErrors = result.ok ? [] : result.errors;
         render();
       });
     }

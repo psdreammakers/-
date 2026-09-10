@@ -270,6 +270,8 @@
       dayJournals: {},
       mindGameEntries: [],
       nextMindGameSeq: 1,
+      processLogEntries: [],
+      nextProcessLogSeq: 1,
     };
   }
 
@@ -377,6 +379,8 @@
           dayJournals: (parsed.dayJournals && typeof parsed.dayJournals === "object") ? parsed.dayJournals : {},
           mindGameEntries: (parsed.mindGameEntries && Array.isArray(parsed.mindGameEntries)) ? parsed.mindGameEntries : [],
           nextMindGameSeq: parsed.nextMindGameSeq || base.nextMindGameSeq,
+          processLogEntries: (parsed.processLogEntries && Array.isArray(parsed.processLogEntries)) ? parsed.processLogEntries : [],
+          nextProcessLogSeq: parsed.nextProcessLogSeq || base.nextProcessLogSeq,
         };
       } catch (e) {
         return defaultState();
@@ -1166,6 +1170,63 @@
       return null;
     }
 
+    // ---- 盤前盤後過程紀錄 (追加需求：把盤前/盤後合成一頁，能記整個過程) -----
+    //
+    // The locked 盤前三欄／盤後兩句 fields (see setDayJournal above) stay
+    // exactly as spec'd — one short answer each, never rich text. This is a
+    // SEPARATE, additive seam for the actual back-and-forth of the day: an
+    // append-only list of short one-line notes you add to as the day
+    // happens ("9:15 看盤前新聞", "14:05 收盤：今天有守紀律"), the same
+    // append-only-log shape as 心理遊戲 above (ordered by `seq`, not a wall
+    // clock — no entry can be edited or reordered after the fact, same
+    // "this really happened, in this order" principle). Never touches
+    // state.dayJournals — writing/reading a process-log entry cannot wipe
+    // or be wiped by 背景/盤前/盤後/經濟事件, which all live there.
+
+    function shapeProcessLogEntry(record) {
+      return { id: record.id, seq: record.seq, dateET: record.dateET, note: record.note };
+    }
+
+    function addProcessLogEntry(input) {
+      var state = getState();
+      input = input || {};
+      var errors = [];
+
+      if (!isValidDateET(input.dateET)) {
+        errors.push("交易日：必須是有效日期");
+      }
+
+      var note = toNullableLine(input.note);
+      if (!note) {
+        errors.push("內容：必填，一句話");
+      }
+
+      if (errors.length > 0) {
+        return { ok: false, errors: errors };
+      }
+
+      var record = {
+        id: "processlog-" + state.nextProcessLogSeq + "-" + Date.now(),
+        seq: state.nextProcessLogSeq,
+        dateET: input.dateET,
+        note: note,
+      };
+
+      state.processLogEntries.push(record);
+      state.nextProcessLogSeq += 1;
+      persist(state);
+
+      return { ok: true, entry: shapeProcessLogEntry(record) };
+    }
+
+    function getProcessLogEntriesForDate(dateET) {
+      var state = getState();
+      return state.processLogEntries
+        .filter(function (e) { return e.dateET === dateET; })
+        .sort(function (a, b) { return a.seq - b.seq; })
+        .map(shapeProcessLogEntry);
+    }
+
     // ---- 經濟事件 (ticket 17): 日程表 lookup + per-user local overlay -------
     //
     // Scheduled rows come from js/schedule.js (pure, stateless, shared) and
@@ -1331,6 +1392,8 @@
       getMindGameEntriesForDate: getMindGameEntriesForDate,
       getAllMindGameEntries: getAllMindGameEntries,
       getMindGameEntryById: getMindGameEntryById,
+      addProcessLogEntry: addProcessLogEntry,
+      getProcessLogEntriesForDate: getProcessLogEntriesForDate,
       getEconomicEventsForDate: getEconomicEventsForDate,
       setEconomicEventLocalFields: setEconomicEventLocalFields,
       addManualEconomicEvent: addManualEconomicEvent,

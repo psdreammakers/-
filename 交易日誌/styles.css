@@ -599,6 +599,25 @@ label.chk {
   margin-top: 6px;
 }
 
+/* 盤前盤後過程紀錄 */
+
+.process-log-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.process-log-item {
+  border: 1px solid var(--line);
+  background: #12171e;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
 /* 分解表 · 時段熱力圖 · 交易報告卡清單聯動 (ticket 16) */
 
 .chip {
