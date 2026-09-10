@@ -420,9 +420,127 @@
       "</form>" +
       '<h3 style="margin-top:16px">當天交易報告卡</h3>' +
       tradeTable +
+      renderEconomicEventsSection(dateET) +
       "</div>" +
       "</div>"
     );
+  }
+
+  // ---- 經濟事件 (ticket 17) ----------------------------------------------
+  //
+  // Deliberately its own function, appended after the rest of 當日日誌's
+  // markup rather than interleaved with it (see readDayJournalFormInput /
+  // the day-journal-form above) — this section reads and writes through
+  // store.getEconomicEventsForDate / setEconomicEventLocalFields /
+  // addManualEconomicEvent / removeManualEconomicEvent, a separate seam from
+  // store.getDayJournal / setDayJournal, so it never touches 當日背景／盤
+  // 前／盤後. Kept as its own block to stay a clean merge target alongside
+  // ticket 19's psychology section, which appends its own block the same
+  // way.
+  //
+  // Most 交易日 have zero scheduled rows — there is no live fetch here, so
+  // there is no "未能自動更新" state to ever show. The 核對日 is displayed
+  // instead so the user can tell "genuinely nothing today" apart from "table
+  // might be stale" for themselves.
+
+  function renderEconomicEventsSection(dateET) {
+    var events = store.getEconomicEventsForDate(dateET);
+
+    var scheduledRows = events.scheduled
+      .map(function (r) {
+        return (
+          "<tr>" +
+          "<td>" + escapeHtml(r.timeET) + "</td>" +
+          "<td>" + escapeHtml(r.name) + "</td>" +
+          "<td>" + escapeHtml(r.agency) + "</td>" +
+          '<td><a href="' + escapeHtml(r.url) + '" target="_blank" rel="noopener">官方頁</a></td>' +
+          '<td><input class="econ-input" type="text" maxlength="40" name="impact__' + escapeHtml(r.id) + '" value="' + escapeHtml(r.impact || "") + '" placeholder="impact"></td>' +
+          '<td><input class="econ-input" type="text" maxlength="40" name="actual__' + escapeHtml(r.id) + '" value="' + escapeHtml(r.actual || "") + '" placeholder="實際"></td>' +
+          '<td><input class="econ-input" type="text" maxlength="40" name="forecast__' + escapeHtml(r.id) + '" value="' + escapeHtml(r.forecast || "") + '" placeholder="預估"></td>' +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var scheduledBlock = events.scheduled.length
+      ? '<form id="economic-events-form">' +
+        '<div class="scroll"><table class="grid">' +
+        "<tr><th>美東時間</th><th>名稱</th><th>機關</th><th>官方連結</th><th>impact</th><th>實際</th><th>預估</th></tr>" +
+        scheduledRows +
+        "</table></div>" +
+        '<p class="row" style="margin-top:8px"><button type="submit" class="ghost">存 impact／實際／預估</button></p>' +
+        "</form>"
+      : '<p class="muted">日程表這天沒有列 FOMC／CPI／NFP／GDP／PCE（多數交易日本來就是這樣，不是壞掉）</p>';
+
+    var manualRows = events.manual
+      .map(function (m) {
+        return (
+          "<tr>" +
+          "<td>" + escapeHtml(m.timeET || "—") + "</td>" +
+          "<td>" + escapeHtml(m.name) + "</td>" +
+          "<td>" + escapeHtml(m.agency || "—") + "</td>" +
+          "<td>" + escapeHtml(m.impact || "—") + "</td>" +
+          "<td>" + escapeHtml(m.actual || "—") + "</td>" +
+          "<td>" + escapeHtml(m.forecast || "—") + "</td>" +
+          '<td><button type="button" class="shot-remove" data-remove-manual-event="' + escapeHtml(m.id) + '">移除</button></td>' +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var manualBlock = events.manual.length
+      ? '<div class="scroll"><table class="grid">' +
+        "<tr><th>美東時間</th><th>名稱</th><th>機關</th><th>impact</th><th>實際</th><th>預估</th><th></th></tr>" +
+        manualRows +
+        "</table></div>"
+      : "";
+
+    return (
+      '<h3 style="margin-top:16px">經濟事件</h3>' +
+      '<p class="muted">日程表核對日：' + escapeHtml(events.scheduleVerifiedAsOf || "—") + "</p>" +
+      scheduledBlock +
+      manualBlock +
+      '<p class="muted" style="margin:10px 0 4px">官方表沒列到的當天可手填一列（Fed 紀要、臨時發布……），不會寫回日程表</p>' +
+      '<form id="add-manual-event-form" class="settings-add-form">' +
+      '<input type="text" name="manualTimeET" placeholder="時間 HH:MM（可空）">' +
+      '<input type="text" name="manualName" placeholder="名稱">' +
+      '<input type="text" name="manualAgency" placeholder="機關（可空）">' +
+      '<input type="text" name="manualImpact" placeholder="impact（可空）">' +
+      '<input type="text" name="manualActual" placeholder="實際（可空）">' +
+      '<input type="text" name="manualForecast" placeholder="預估（可空）">' +
+      '<button type="submit" class="ghost">新增手填列</button>' +
+      "</form>"
+    );
+  }
+
+  function readEconomicEventsFormInput(form) {
+    var fd = new FormData(form);
+    var fields = {};
+    fd.forEach(function (value, key) {
+      var sep = key.indexOf("__");
+      if (sep === -1) return;
+      var field = key.slice(0, sep);
+      var eventId = key.slice(sep + 2);
+      if (!fields[eventId]) fields[eventId] = {};
+      fields[eventId][field] = value;
+    });
+    return fields;
+  }
+
+  function readManualEventFormInput(form) {
+    var fd = new FormData(form);
+    function v(name) {
+      var val = fd.get(name);
+      return val === null ? undefined : val;
+    }
+    return {
+      timeET: v("manualTimeET"),
+      name: v("manualName"),
+      agency: v("manualAgency"),
+      impact: v("manualImpact"),
+      actual: v("manualActual"),
+      forecast: v("manualForecast"),
+    };
   }
 
   function readDayJournalFormInput(form) {
@@ -1065,6 +1183,40 @@
         e.preventDefault();
         var input = readDayJournalFormInput(dayJournalForm);
         store.setDayJournal(state.openDayJournalDate, input);
+        render();
+      });
+    }
+
+    // ---- 經濟事件 (ticket 17) — own forms, own seam into the store --------
+
+    var economicEventsForm = document.getElementById("economic-events-form");
+    if (economicEventsForm) {
+      economicEventsForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var byEventId = readEconomicEventsFormInput(economicEventsForm);
+        for (var eventId in byEventId) {
+          if (!Object.prototype.hasOwnProperty.call(byEventId, eventId)) continue;
+          store.setEconomicEventLocalFields(state.openDayJournalDate, eventId, byEventId[eventId]);
+        }
+        render();
+      });
+    }
+
+    var addManualEventForm = document.getElementById("add-manual-event-form");
+    if (addManualEventForm) {
+      addManualEventForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var input = readManualEventFormInput(addManualEventForm);
+        store.addManualEconomicEvent(state.openDayJournalDate, input);
+        render();
+      });
+    }
+
+    var removeManualEventBtns = app.querySelectorAll("[data-remove-manual-event]");
+    for (var me = 0; me < removeManualEventBtns.length; me++) {
+      removeManualEventBtns[me].addEventListener("click", function (e) {
+        var id = e.currentTarget.getAttribute("data-remove-manual-event");
+        store.removeManualEconomicEvent(state.openDayJournalDate, id);
         render();
       });
     }
