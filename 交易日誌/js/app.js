@@ -21,6 +21,7 @@
     settingsErrors: [],
     calendarMonth: currentMonthET(), // "YYYY-MM", 損益月曆 shown on 指揮中心
     openDayJournalDate: null, // "YYYY-MM-DD" | null — 當日日誌 overlay (also opened from 心理戰)
+    dayJournalTab: "overview", // which 當日日誌 sub-tab is showing; reset to "overview" every time a day is (re)opened
     mindGameErrorsForCard: [], // errors from the 心理遊戲 add-form inside 交易報告卡 detail
     mindGameErrorsForDay: [], // errors from the 心理遊戲 add-form inside 當日日誌
 
@@ -248,7 +249,7 @@
       renderFilterBar() +
       '<div class="heroes">' + heroes + "</div>" +
       equityPanel +
-      renderCalendar() +
+      renderCalendar(stats.cards) +
       renderLinkedSection(stats, accounts)
     );
   }
@@ -519,9 +520,15 @@
     return rows;
   }
 
-  function renderCalendar() {
+  function renderCalendar(cards) {
+    // `cards` is the SAME primary-filtered set (帳戶/商品/setup/區間) that
+    // drives the hero stats/equity curve/breakdown/heatmap above — the
+    // calendar used to always sum every account's cards regardless of the
+    // 帳戶 filter, which made switching accounts look like it did nothing
+    // here. Reuse the one filtered set so 損益月曆 tracks the same 帳戶
+    // selection as the rest of 指揮中心 (its own click-to-open-day behavior
+    // is unaffected: it never touches state.filters or secondarySelection).
     var ym = state.calendarMonth;
-    var cards = store.getCards();
     var byDate = {};
     cards.forEach(function (c) {
       if (c.dateET.slice(0, 7) !== ym) return;
@@ -579,25 +586,90 @@
   //
   // One page per 交易日, opened by clicking a 損益月曆 day (including days
   // with zero trades — it must open fully blank, not conditional on having
-  // trades). Not split by product. The day's trade cards are auto-listed
-  // (no manual selection) in ascending time order; clicking a row opens the
-  // same 交易報告卡 view the main list opens (see findCardById / renderCardSheet).
+  // trades). Not split by product.
+  //
+  // Sub-tabs (state.dayJournalTab, reset to "overview" every time a day is
+  // opened): 總覽 is READ-ONLY — a summary of the day's state (trade list,
+  // day P&L, and a one-line digest of whatever's been filled in elsewhere)
+  // — no input fields live here. Each of 背景/盤前/盤後 is its own small
+  // input form on its own tab, so "what's an input, and where do I type it"
+  // has one obvious answer per field instead of one long form dumped in
+  // front of you the moment you open a day. 心理遊戲/經濟事件 keep their
+  // existing self-contained sections, just tab-gated instead of always-on.
+  //
+  // Because store.setDayJournal() upserts the WHOLE day-journal record
+  // (tested as "re-saving fully replaces the prior fields, not a merge" —
+  // see tests/day-journal.test.js), saving from any single tab must first
+  // read the current record and overlay only that tab's fields on top
+  // (mergeDayJournalInput below), or saving 盤前 would silently blank out
+  // 背景/盤後 and vice versa. This is an app.js-level concern; store.js's
+  // upsert contract is unchanged and still relied on elsewhere as-is.
+
+  var DAY_JOURNAL_TABS = [
+    { key: "overview", label: "總覽" },
+    { key: "background", label: "背景" },
+    { key: "premarket", label: "盤前" },
+    { key: "postmarket", label: "盤後" },
+    { key: "mindgame", label: "心理遊戲" },
+    { key: "econ", label: "經濟事件" },
+  ];
+
+  function mergeDayJournalInput(dateET, partial) {
+    var current = store.getDayJournal(dateET);
+    function pick(key) {
+      return partial[key] !== undefined ? partial[key] : current[key];
+    }
+    return {
+      background: pick("background"),
+      riskCapUsd: pick("riskCapUsd"),
+      plannedSetups: pick("plannedSetups"),
+      planLine: pick("planLine"),
+      didWell: pick("didWell"),
+      changeTomorrow: pick("changeTomorrow"),
+    };
+  }
 
   function renderDayJournal(dateET) {
+    var tab = state.dayJournalTab || "overview";
+
+    var tabsNav =
+      '<nav class="tabs day-tabs">' +
+      DAY_JOURNAL_TABS.map(function (t) {
+        return '<button class="' + (tab === t.key ? "on" : "") + '" data-day-tab="' + t.key + '">' + t.label + "</button>";
+      }).join("") +
+      "</nav>";
+
+    var content;
+    if (tab === "background") content = renderDayBackgroundTab(store.getDayJournal(dateET));
+    else if (tab === "premarket") content = renderDayPremarketTab(store.getDayJournal(dateET));
+    else if (tab === "postmarket") content = renderDayPostmarketTab(store.getDayJournal(dateET));
+    else if (tab === "mindgame") content = renderDayMindGameSection(dateET);
+    else if (tab === "econ") content = renderEconomicEventsSection(dateET);
+    else content = renderDayOverviewTab(dateET);
+
+    return (
+      '<div class="overlay" id="day-journal-overlay">' +
+      '<div class="sheet">' +
+      '<div class="row" style="justify-content:space-between;align-items:center">' +
+      "<h2>當日日誌 · 美東 " + escapeHtml(dateET) + "</h2>" +
+      '<button type="button" class="ghost" id="close-day-journal-btn">關閉</button>' +
+      "</div>" +
+      tabsNav +
+      content +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  // 總覽：唯讀。不是輸入頁 — 背景/盤前/盤後有沒有填、心理遊戲/經濟事件有幾則，
+  // 都只是顯示現況跟連去哪一頁看／改；真的要輸入，換到那一頁的表單。
+  function renderDayOverviewTab(dateET) {
     var journal = store.getDayJournal(dateET);
-    var setups = store.getSetups();
     var accounts = store.getAccounts();
     var cardsOnDate = store.getCardsOnDate(dateET);
 
-    var setupChecks = setups
-      .map(function (s) {
-        var checked = journal.plannedSetups.indexOf(s) !== -1 ? " checked" : "";
-        return (
-          '<label class="chk"><input type="checkbox" name="plannedSetups" value="' + escapeHtml(s) + '"' + checked + "> " +
-          escapeHtml(s) + "</label>"
-        );
-      })
-      .join("");
+    var dayNet = 0;
+    cardsOnDate.forEach(function (c) { dayNet += store.netPnlOf(c); });
 
     var rows = cardsOnDate
       .map(function (c) {
@@ -624,14 +696,67 @@
         "</tr>" + rows + "</table></div>"
       : '<p class="muted">這天沒有交易報告卡</p>';
 
+    var hasPremarket = journal.riskCapUsd !== null || !!journal.planLine || journal.plannedSetups.length > 0;
+    var premarketBits = [];
+    if (journal.planLine) premarketBits.push(journal.planLine);
+    if (journal.riskCapUsd !== null) premarketBits.push("風險上限 " + money(journal.riskCapUsd));
+    if (journal.plannedSetups.length) premarketBits.push("只做：" + journal.plannedSetups.join("、"));
+
+    var hasPostmarket = !!journal.didWell || !!journal.changeTomorrow;
+    var postmarketBits = [];
+    if (journal.didWell) postmarketBits.push("做得好：" + journal.didWell);
+    if (journal.changeTomorrow) postmarketBits.push("明天改：" + journal.changeTomorrow);
+
+    var mindGameCount = store.getMindGameEntriesForDate(dateET).length;
+    var econCount = store.getEconomicEventsForDate(dateET).scheduled.length;
+
+    function summaryRow(label, value) {
+      return '<div class="day-summary-row"><span class="muted">' + escapeHtml(label) + "</span><span>" + value + "</span></div>";
+    }
+
     return (
-      '<div class="overlay" id="day-journal-overlay">' +
-      '<div class="sheet">' +
-      "<h2>當日日誌 · 美東 " + escapeHtml(dateET) + "</h2>" +
+      '<div class="day-overview">' +
+      '<div class="heroes" style="margin-bottom:10px">' +
+      statHero("當日淨損益", money(dayNet)) +
+      statHero("當日筆數", cardsOnDate.length) +
+      "</div>" +
+      '<div class="panel" style="margin-bottom:10px">' +
+      summaryRow("背景", journal.background ? escapeHtml(journal.background) : '<span class="muted">（未填，見「背景」頁）</span>') +
+      summaryRow("盤前計畫", hasPremarket ? escapeHtml(premarketBits.join("・")) : '<span class="muted">（未填，見「盤前」頁）</span>') +
+      summaryRow("盤後複盤", hasPostmarket ? escapeHtml(postmarketBits.join("・")) : '<span class="muted">（未填，見「盤後」頁）</span>') +
+      summaryRow("心理遊戲", mindGameCount ? mindGameCount + " 則" : '<span class="muted">（沒有）</span>') +
+      summaryRow("經濟事件", econCount ? econCount + " 則排定" : '<span class="muted">今天沒有排定的官方事件</span>') +
+      "</div>" +
+      "<h3>當天交易報告卡</h3>" +
+      tradeTable +
+      "</div>"
+    );
+  }
+
+  function renderDayBackgroundTab(journal) {
+    return (
       '<form id="day-journal-form">' +
       '<label class="full">當日背景（有事才寫，可空：斷線／會議／資金異動／生活事件／跳空）' +
       '<input type="text" name="background" maxlength="160" value="' + escapeHtml(journal.background || "") + '"></label>' +
-      "<h3>盤前</h3>" +
+      '<p class="row" style="margin-top:14px"><button type="submit" class="primary">存檔</button></p>' +
+      "</form>"
+    );
+  }
+
+  function renderDayPremarketTab(journal) {
+    var setups = store.getSetups();
+    var setupChecks = setups
+      .map(function (s) {
+        var checked = journal.plannedSetups.indexOf(s) !== -1 ? " checked" : "";
+        return (
+          '<label class="chk"><input type="checkbox" name="plannedSetups" value="' + escapeHtml(s) + '"' + checked + "> " +
+          escapeHtml(s) + "</label>"
+        );
+      })
+      .join("");
+
+    return (
+      '<form id="day-journal-form">' +
       '<div class="field-grid">' +
       '<label>風險上限（USD，可空）<input type="number" name="riskCapUsd" step="any" value="' +
       (journal.riskCapUsd === null ? "" : journal.riskCapUsd) + '"></label>' +
@@ -639,22 +764,20 @@
       "</div>" +
       '<p class="muted" style="margin:8px 0 4px">今天只做哪些 setup 標（可多選，只是計畫，不篩限當天能記的交易）</p>' +
       '<div class="row">' + (setupChecks || '<span class="muted">尚無 setup 標</span>') + "</div>" +
-      "<h3>盤後</h3>" +
+      '<p class="row" style="margin-top:14px"><button type="submit" class="primary">存檔</button></p>' +
+      "</form>"
+    );
+  }
+
+  function renderDayPostmarketTab(journal) {
+    return (
+      '<form id="day-journal-form">' +
       '<div class="field-grid">' +
       '<label>做得好的一件（可空）<input type="text" name="didWell" maxlength="120" value="' + escapeHtml(journal.didWell || "") + '"></label>' +
       '<label>明天只改一件（可空）<input type="text" name="changeTomorrow" maxlength="120" value="' + escapeHtml(journal.changeTomorrow || "") + '"></label>' +
       "</div>" +
-      '<p class="row" style="margin-top:14px">' +
-      '<button type="submit" class="primary">存檔</button>' +
-      '<button type="button" class="ghost" id="close-day-journal-btn">關閉</button>' +
-      "</p>" +
-      "</form>" +
-      '<h3 style="margin-top:16px">當天交易報告卡</h3>' +
-      tradeTable +
-      renderEconomicEventsSection(dateET) +
-      renderDayMindGameSection(dateET) +
-      "</div>" +
-      "</div>"
+      '<p class="row" style="margin-top:14px"><button type="submit" class="primary">存檔</button></p>' +
+      "</form>"
     );
   }
 
@@ -794,6 +917,15 @@
   }
 
   function readDayJournalFormInput(form) {
+    // Each 當日日誌 sub-tab now renders only ITS OWN fields in this form
+    // (see renderDayBackgroundTab/renderDayPremarketTab/renderDayPostmarketTab),
+    // so most calls only ever see a subset of these names present in the
+    // DOM. A field genuinely absent from the form must read back as
+    // `undefined` (not "" / [] ), so mergeDayJournalInput can tell "this
+    // tab didn't touch that field" apart from "this tab cleared it to
+    // blank" — fd.getAll on a name with zero checked boxes returns [] even
+    // when the field isn't in the form at all, so plannedSetups needs an
+    // explicit presence check the others don't.
     var fd = new FormData(form);
     function line(name) {
       var v = fd.get(name);
@@ -804,10 +936,11 @@
       if (v === null || v === "") return undefined;
       return Number(v);
     }
+    var hasPlannedSetups = !!form.querySelector('[name="plannedSetups"]');
     return {
       background: line("background"),
       riskCapUsd: numField("riskCapUsd"),
-      plannedSetups: fd.getAll("plannedSetups"),
+      plannedSetups: hasPlannedSetups ? fd.getAll("plannedSetups") : undefined,
       planLine: line("planLine"),
       didWell: line("didWell"),
       changeTomorrow: line("changeTomorrow"),
@@ -1243,6 +1376,7 @@
         state.openCardId = null;
         state.settingsOpen = false;
         state.openDayJournalDate = null;
+        state.dayJournalTab = "overview";
         state.mindGameErrorsForCard = [];
         state.mindGameErrorsForDay = [];
         render();
@@ -1531,6 +1665,7 @@
         // filter. Folds in as the fourth mutually-exclusive overlay: closes
         // form/settings/card-detail, same as any other "open an overlay" entry.
         state.openDayJournalDate = e.currentTarget.getAttribute("data-date");
+        state.dayJournalTab = "overview";
         state.openCardId = null;
         state.formOpen = false;
         state.settingsOpen = false;
@@ -1546,6 +1681,7 @@
     for (var od = 0; od < openDayDateEls.length; od++) {
       openDayDateEls[od].addEventListener("click", function (e) {
         state.openDayJournalDate = e.currentTarget.getAttribute("data-open-day-date");
+        state.dayJournalTab = "overview";
         state.openCardId = null;
         state.formOpen = false;
         state.settingsOpen = false;
@@ -1592,6 +1728,7 @@
         });
         circle.addEventListener("click", function () {
           state.openDayJournalDate = circle.getAttribute("data-date");
+          state.dayJournalTab = "overview";
           state.openCardId = null;
           state.formOpen = false;
           state.settingsOpen = false;
@@ -1691,8 +1828,20 @@
     if (dayJournalForm) {
       dayJournalForm.addEventListener("submit", function (e) {
         e.preventDefault();
-        var input = readDayJournalFormInput(dayJournalForm);
-        store.setDayJournal(state.openDayJournalDate, input);
+        // store.setDayJournal() upserts the whole record, so a single tab's
+        // form must be merged onto the current record first (see
+        // mergeDayJournalInput) — otherwise saving 盤前 would blank 背景/盤後.
+        var partial = readDayJournalFormInput(dayJournalForm);
+        var merged = mergeDayJournalInput(state.openDayJournalDate, partial);
+        store.setDayJournal(state.openDayJournalDate, merged);
+        render();
+      });
+    }
+
+    var dayTabBtns = app.querySelectorAll("[data-day-tab]");
+    for (var dt = 0; dt < dayTabBtns.length; dt++) {
+      dayTabBtns[dt].addEventListener("click", function (e) {
+        state.dayJournalTab = e.currentTarget.getAttribute("data-day-tab");
         render();
       });
     }

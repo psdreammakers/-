@@ -308,6 +308,23 @@ tr.demo-row {
   overflow: auto;
 }
 
+.day-tabs {
+  margin: 12px 0 14px;
+  flex-wrap: wrap;
+}
+
+.day-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.day-summary-row:last-child {
+  border-bottom: none;
+}
+
 .field-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
