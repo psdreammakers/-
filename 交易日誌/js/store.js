@@ -1211,6 +1211,12 @@
       };
     }
 
+    function saveDayJournalRecord(state, dateET, record, economicEvents) {
+      var stored = { background: record.background, riskCapUsd: record.riskCapUsd, plannedSetups: record.plannedSetups, planLine: record.planLine, didWell: record.didWell, changeTomorrow: record.changeTomorrow, economicEvents: economicEvents };
+      state.dayJournals[dateET] = stored;
+      persist(state);
+    }
+
     function setEconomicEventLocalFields(dateET, eventId, fields) {
       if (!isValidDateET(dateET)) {
         return { ok: false, errors: ["美東日期：必須是有效日期"] };
@@ -1229,9 +1235,7 @@
         actual: toNullableLine(fields.actual),
         forecast: toNullableLine(fields.forecast),
       };
-      var stored = { background: record.background, riskCapUsd: record.riskCapUsd, plannedSetups: record.plannedSetups, planLine: record.planLine, didWell: record.didWell, changeTomorrow: record.changeTomorrow, economicEvents: economicEvents };
-      state.dayJournals[dateET] = stored;
-      persist(state);
+      saveDayJournalRecord(state, dateET, record, economicEvents);
       return { ok: true, journal: getEconomicEventsForDate(dateET) };
     }
 
@@ -1265,9 +1269,7 @@
       economicEvents.manual.push(row);
       state.nextEconomicEventSeq += 1;
 
-      var stored = { background: record.background, riskCapUsd: record.riskCapUsd, plannedSetups: record.plannedSetups, planLine: record.planLine, didWell: record.didWell, changeTomorrow: record.changeTomorrow, economicEvents: economicEvents };
-      state.dayJournals[dateET] = stored;
-      persist(state);
+      saveDayJournalRecord(state, dateET, record, economicEvents);
       return { ok: true, journal: getEconomicEventsForDate(dateET), event: row };
     }
 

@@ -799,14 +799,14 @@
       var v = fd.get(name);
       return v === null ? undefined : v;
     }
-    function num(name) {
+    function numField(name) {
       var v = fd.get(name);
       if (v === null || v === "") return undefined;
       return Number(v);
     }
     return {
       background: line("background"),
-      riskCapUsd: num("riskCapUsd"),
+      riskCapUsd: numField("riskCapUsd"),
       plannedSetups: fd.getAll("plannedSetups"),
       planLine: line("planLine"),
       didWell: line("didWell"),
@@ -867,7 +867,7 @@
 
   function readFormInput(form) {
     var fd = new FormData(form);
-    function num(name) {
+    function numField(name) {
       var v = fd.get(name);
       if (v === null || v === "") return undefined;
       return Number(v);
@@ -889,14 +889,14 @@
       grade: str("grade"),
       execGrade: str("execGrade"),
       size: int("size"),
-      pnl: num("pnl"),
+      pnl: numField("pnl"),
       dateET: str("dateET"),
       timeET: str("timeET"),
-      entryPrice: num("entryPrice"),
-      exitPrice: num("exitPrice"),
-      stopPrice: num("stopPrice"),
-      plannedRisk: num("plannedRisk"),
-      fee: num("fee"),
+      entryPrice: numField("entryPrice"),
+      exitPrice: numField("exitPrice"),
+      stopPrice: numField("stopPrice"),
+      plannedRisk: numField("plannedRisk"),
+      fee: numField("fee"),
       entryReason: str("entryReason"),
       exitReason: str("exitReason"),
       lesson: str("lesson"),
