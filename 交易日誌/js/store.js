@@ -1058,6 +1058,20 @@
       return { ok: true, journal: shapeDayJournal(dateET, record) };
     }
 
+    // For the 交易規劃與檢討 tab's history list (browse every day that has a
+    // 盤前/盤後 entry, like 心理戰 browses every 心理遊戲 entry). Excludes
+    // dates whose record only ever got touched for 背景 or 經濟事件 — those
+    // aren't "a plan or review", so they'd just be noise in this list.
+    function getAllPlanReviewEntries() {
+      var state = getState();
+      return Object.keys(state.dayJournals)
+        .map(function (dateET) { return shapeDayJournal(dateET, state.dayJournals[dateET]); })
+        .filter(function (j) {
+          return j.riskCapUsd !== null || !!j.planLine || j.plannedSetups.length > 0 || !!j.didWell || !!j.changeTomorrow;
+        })
+        .sort(function (a, b) { return a.dateET < b.dateET ? 1 : a.dateET > b.dateET ? -1 : 0; }); // newest first
+    }
+
     // ---- 心理遊戲 / 心理戰 (ticket 19) -----------------------------------
     //
     // Written only at the moment a decision was emotionally hijacked — not a
@@ -1387,6 +1401,7 @@
       weekdayOfDateET: weekdayOfDateET,
       getDayJournal: getDayJournal,
       setDayJournal: setDayJournal,
+      getAllPlanReviewEntries: getAllPlanReviewEntries,
       addMindGameEntry: addMindGameEntry,
       getMindGameEntriesForCard: getMindGameEntriesForCard,
       getMindGameEntriesForDate: getMindGameEntriesForDate,

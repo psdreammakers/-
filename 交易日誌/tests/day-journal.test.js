@@ -150,6 +150,29 @@ test("re-saving a day journal fully replaces the prior fields (upsert, not appen
   assert.strictEqual(journal.didWell, "有守紀律");
 });
 
+// ---- getAllPlanReviewEntries: the 交易規劃與檢討 tab's history list -----
+
+test("getAllPlanReviewEntries is empty when nothing has been planned or reviewed", function () {
+  var store = freshStore();
+  assert.deepStrictEqual(store.getAllPlanReviewEntries(), []);
+});
+
+test("getAllPlanReviewEntries excludes dates only touched for 背景 (not a plan or review)", function () {
+  var store = freshStore();
+  store.setDayJournal("2026-09-10", { background: "斷線" });
+  assert.deepStrictEqual(store.getAllPlanReviewEntries(), []);
+});
+
+test("getAllPlanReviewEntries includes any date with a 盤前 or 盤後 field set, newest first", function () {
+  var store = freshStore();
+  store.setDayJournal("2026-09-08", { planLine: "只做順勢" });
+  store.setDayJournal("2026-09-12", { didWell: "有守紀律" });
+  var entries = store.getAllPlanReviewEntries();
+  assert.strictEqual(entries.length, 2);
+  assert.strictEqual(entries[0].dateET, "2026-09-12", "newest first");
+  assert.strictEqual(entries[1].dateET, "2026-09-08");
+});
+
 // ---- getCardsOnDate is demo-aware, like getCards() ----------------------
 
 test("getCardsOnDate reads from demo data when there are no real cards yet", function () {

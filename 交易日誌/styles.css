@@ -8,6 +8,7 @@
   --green: #4ade80;
   --red: #f87171;
   --amber: #fbbf24;
+  --pink: #f472b6;
 }
 
 * {
@@ -475,9 +476,40 @@ tr.clickable:hover {
   background: #7f1d1d;
 }
 
+.cal-day-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+}
+
 .cal-day .n {
   font-size: 11px;
   color: var(--muted);
+}
+
+.cal-dots {
+  display: flex;
+  gap: 3px;
+}
+
+.cal-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.cal-dot.econ {
+  background: var(--amber);
+}
+
+.cal-dot.mind {
+  background: var(--pink);
+}
+
+.cal-dot.review {
+  background: var(--sky);
 }
 
 .cal-day .p {
@@ -593,6 +625,37 @@ label.chk {
   margin-top: 4px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.plan-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-history-item {
+  border: 1px solid var(--line);
+  background: #12171e;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.plan-history-item:hover {
+  outline: 1px solid var(--sky);
+}
+
+.plan-history-date {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.plan-history-bits {
+  margin-top: 2px;
+  font-size: 13px;
 }
 
 .mindgame-form {

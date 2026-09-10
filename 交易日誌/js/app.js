@@ -9,9 +9,10 @@
   var GRADES = window.TradingJournal.GRADES;
   var SIDES = window.TradingJournal.SIDES;
   var MIND_GAME_TYPES = window.TradingJournal.MIND_GAME_TYPES;
+  var CsvFormats = window.TradingJournalCsvFormats || null;
 
   var state = {
-    tab: "cmd", // "cmd" | "psych"
+    tab: "cmd", // "cmd" | "psych" | "plan"
     formOpen: false,
     formErrors: [],
     openCardId: null, // set when a trade report card's detail view is open (also opened from 當日日誌 or 心理戰)
@@ -19,7 +20,11 @@
     filters: store.createDefaultFilters(),
     settingsOpen: false,
     settingsErrors: [],
+    // 券商 CSV 上傳後，存檔前的待確認清單 (見 renderImportReview)。
+    // null，或 { format, fileError, rows: [{ key, parsed, accountId, product, setup, grade, execGrade, saved, error }] }
+    importReview: null,
     calendarMonth: currentMonthET(), // "YYYY-MM", 損益月曆 shown on 指揮中心
+    planDate: todayET(), // "YYYY-MM-DD", 交易規劃與檢討 tab's currently-shown date — navigated on its own, independent of 損益月曆/當日日誌
     openDayJournalDate: null, // "YYYY-MM-DD" | null — 當日日誌 overlay (also opened from 心理戰)
     dayJournalTab: "overview", // which 當日日誌 sub-tab is showing; reset to "overview" every time a day is (re)opened
     mindGameErrorsForCard: [], // errors from the 心理遊戲 add-form inside 交易報告卡 detail
@@ -521,6 +526,24 @@
     return rows;
   }
 
+  // 損益月曆 day-cell dots: at-a-glance "is there something on this day
+  // worth opening 當日日誌 for", independent of whether it had any trades.
+  // A month has at most 31 days, so a handful of store lookups per cell
+  // (already O(1)/small on their own) costs nothing worth precomputing.
+  function calDayDots(dateET) {
+    var econ = store.getEconomicEventsForDate(dateET);
+    var hasEcon = econ.scheduled.length > 0 || econ.manual.length > 0;
+    var hasMindGame = store.getMindGameEntriesForDate(dateET).length > 0;
+    var j = store.getDayJournal(dateET);
+    var hasPlanReview = j.riskCapUsd !== null || !!j.planLine || j.plannedSetups.length > 0 || !!j.didWell || !!j.changeTomorrow;
+
+    var dots =
+      (hasEcon ? '<span class="cal-dot econ" title="經濟事件"></span>' : "") +
+      (hasMindGame ? '<span class="cal-dot mind" title="心理遊戲"></span>' : "") +
+      (hasPlanReview ? '<span class="cal-dot review" title="交易規劃與檢討"></span>' : "");
+    return dots ? '<div class="cal-dots">' + dots + "</div>" : "";
+  }
+
   function renderCalendar(cards) {
     // `cards` is the SAME primary-filtered set (帳戶/商品/setup/區間) that
     // drives the hero stats/equity curve/breakdown/heatmap above — the
@@ -556,7 +579,7 @@
             var dayNum = parseInt(dateET.slice(8, 10), 10);
             return (
               '<button type="button" class="' + cls + '" data-date="' + dateET + '">' +
-              '<div class="n">' + dayNum + "</div>" +
+              '<div class="cal-day-top"><div class="n">' + dayNum + "</div>" + calDayDots(dateET) + "</div>" +
               (rec ? '<div class="p">' + money(rec.netPnl) + '</div><div class="c">' + rec.count + " 筆</div>" : "") +
               "</button>"
             );
@@ -592,24 +615,26 @@
   // Sub-tabs (state.dayJournalTab, reset to "overview" every time a day is
   // opened): 總覽 is READ-ONLY — a summary of the day's state (trade list,
   // day P&L, and a one-line digest of whatever's been filled in elsewhere)
-  // — no input fields live here. Each of 背景/盤前/盤後 is its own small
-  // input form on its own tab, so "what's an input, and where do I type it"
-  // has one obvious answer per field instead of one long form dumped in
-  // front of you the moment you open a day. 心理遊戲/經濟事件 keep their
-  // existing self-contained sections, just tab-gated instead of always-on.
+  // — no input fields live here. 背景 is its own small input form on its
+  // own tab; 過程紀錄 is its own append-only log on its own tab. 盤前／盤後
+  // （風險上限／setup 計畫／一句計畫／做得好的一件／明天只改一件）live
+  // outside this overlay entirely, on the top-level 交易規劃與檢討 tab —
+  // plannable/reviewable for any date up front, not gated behind opening
+  // that day's 當日日誌. 心理遊戲/經濟事件 keep their existing self-
+  // contained sections, just tab-gated instead of always-on.
   //
   // Because store.setDayJournal() upserts the WHOLE day-journal record
   // (tested as "re-saving fully replaces the prior fields, not a merge" —
-  // see tests/day-journal.test.js), saving from any single tab must first
-  // read the current record and overlay only that tab's fields on top
-  // (mergeDayJournalInput below), or saving 盤前 would silently blank out
-  // 背景/盤後 and vice versa. This is an app.js-level concern; store.js's
-  // upsert contract is unchanged and still relied on elsewhere as-is.
+  // see tests/day-journal.test.js), saving from 背景 or from 交易規劃與檢討
+  // must first read the current record and overlay only that form's fields
+  // on top (mergeDayJournalInput below), or saving one would silently blank
+  // out the other. This is an app.js-level concern; store.js's upsert
+  // contract is unchanged and still relied on elsewhere as-is.
 
   var DAY_JOURNAL_TABS = [
     { key: "overview", label: "總覽" },
     { key: "background", label: "背景" },
-    { key: "process", label: "盤前盤後" },
+    { key: "process", label: "過程紀錄" },
     { key: "mindgame", label: "心理遊戲" },
     { key: "econ", label: "經濟事件" },
   ];
@@ -640,7 +665,7 @@
       "</nav>";
 
     var content;
-    if (tab === "background") content = renderDayBackgroundTab(store.getDayJournal(dateET));
+    if (tab === "background") content = renderDayBackgroundTab(dateET);
     else if (tab === "process") content = renderDayProcessTab(dateET);
     else if (tab === "mindgame") content = renderDayMindGameSection(dateET);
     else if (tab === "econ") content = renderEconomicEventsSection(dateET);
@@ -695,19 +720,25 @@
         "</tr>" + rows + "</table></div>"
       : '<p class="muted">這天沒有交易報告卡</p>';
 
+    // Each bit is escaped/safe on its own before joining — money() already
+    // returns safe HTML (a <span> for +/- coloring), so escaping the JOINED
+    // string a second time would show that span's tags as literal text;
+    // only the free-typed bits (planLine/plannedSetups/didWell/changeTomorrow)
+    // need escapeHtml, and only right where they're user text.
     var hasPremarket = journal.riskCapUsd !== null || !!journal.planLine || journal.plannedSetups.length > 0;
     var premarketBits = [];
-    if (journal.planLine) premarketBits.push(journal.planLine);
+    if (journal.planLine) premarketBits.push(escapeHtml(journal.planLine));
     if (journal.riskCapUsd !== null) premarketBits.push("風險上限 " + money(journal.riskCapUsd));
-    if (journal.plannedSetups.length) premarketBits.push("只做：" + journal.plannedSetups.join("、"));
+    if (journal.plannedSetups.length) premarketBits.push("只做：" + escapeHtml(journal.plannedSetups.join("、")));
 
     var hasPostmarket = !!journal.didWell || !!journal.changeTomorrow;
     var postmarketBits = [];
-    if (journal.didWell) postmarketBits.push("做得好：" + journal.didWell);
-    if (journal.changeTomorrow) postmarketBits.push("明天改：" + journal.changeTomorrow);
+    if (journal.didWell) postmarketBits.push("做得好：" + escapeHtml(journal.didWell));
+    if (journal.changeTomorrow) postmarketBits.push("明天改：" + escapeHtml(journal.changeTomorrow));
 
     var mindGameCount = store.getMindGameEntriesForDate(dateET).length;
-    var econCount = store.getEconomicEventsForDate(dateET).scheduled.length;
+    var econEntries = store.getEconomicEventsForDate(dateET);
+    var econNames = econEntries.scheduled.map(function (r) { return r.name; }).concat(econEntries.manual.map(function (m) { return m.name; }));
     var processLogCount = store.getProcessLogEntriesForDate(dateET).length;
 
     function summaryRow(label, value) {
@@ -722,11 +753,11 @@
       "</div>" +
       '<div class="panel" style="margin-bottom:10px">' +
       summaryRow("背景", journal.background ? escapeHtml(journal.background) : '<span class="muted">（未填，見「背景」頁）</span>') +
-      summaryRow("盤前計畫", hasPremarket ? escapeHtml(premarketBits.join("・")) : '<span class="muted">（未填，見「盤前盤後」頁）</span>') +
-      summaryRow("盤後複盤", hasPostmarket ? escapeHtml(postmarketBits.join("・")) : '<span class="muted">（未填，見「盤前盤後」頁）</span>') +
-      summaryRow("過程紀錄", processLogCount ? processLogCount + " 則" : '<span class="muted">（沒有，見「盤前盤後」頁）</span>') +
+      summaryRow("盤前計畫", hasPremarket ? premarketBits.join("・") : '<span class="muted">（未填，見頂部「交易規劃與檢討」頁）</span>') +
+      summaryRow("盤後複盤", hasPostmarket ? postmarketBits.join("・") : '<span class="muted">（未填，見頂部「交易規劃與檢討」頁）</span>') +
+      summaryRow("過程紀錄", processLogCount ? processLogCount + " 則" : '<span class="muted">（沒有，見「過程紀錄」頁）</span>') +
       summaryRow("心理遊戲", mindGameCount ? mindGameCount + " 則" : '<span class="muted">（沒有）</span>') +
-      summaryRow("經濟事件", econCount ? econCount + " 則排定" : '<span class="muted">今天沒有排定的官方事件</span>') +
+      summaryRow("經濟事件", econNames.length ? escapeHtml(econNames.join("、")) : '<span class="muted">今天沒有排定的官方事件，見「經濟事件」頁</span>') +
       "</div>" +
       "<h3>當天交易報告卡</h3>" +
       tradeTable +
@@ -734,9 +765,10 @@
     );
   }
 
-  function renderDayBackgroundTab(journal) {
+  function renderDayBackgroundTab(dateET) {
+    var journal = store.getDayJournal(dateET);
     return (
-      '<form id="day-journal-form">' +
+      '<form id="day-journal-form" data-context-date="' + escapeHtml(dateET) + '">' +
       '<label class="full">當日背景（有事才寫，可空：斷線／會議／資金異動／生活事件／跳空）' +
       '<input type="text" name="background" maxlength="160" value="' + escapeHtml(journal.background || "") + '"></label>' +
       '<p class="row" style="margin-top:14px"><button type="submit" class="primary">存檔</button></p>' +
@@ -744,50 +776,17 @@
     );
   }
 
-  // 盤前盤後：ONE tab, two things stacked on it.
-  //   1. The locked short-answer fields (盤前三欄／盤後兩句) — one form, one
-  //      存檔 button. readDayJournalFormInput() already reads whichever of
-  //      the 6 day-journal field names are present in a given form and
-  //      leaves the rest `undefined`, so a form carrying BOTH 盤前's and
-  //      盤後's fields together needs no changes there — the existing
-  //      day-journal-form submit handler (mergeDayJournalInput) already
-  //      does the right thing.
-  //   2. 過程紀錄 (process log) — a separate, append-only list+form for the
-  //      actual back-and-forth of the day (see store.addProcessLogEntry).
-  //      Its own <form>, its own store seam; saving it never touches (and
-  //      is never touched by) 背景/盤前三欄/盤後兩句 above.
+  // 過程紀錄 (process log) — append-only list+form for the actual
+  // back-and-forth of the day (see store.addProcessLogEntry). Its own
+  // <form>, its own store seam; saving it never touches (and is never
+  // touched by) 背景/盤前/盤後.
+  //
+  // 盤前／盤後（風險上限／setup 計畫／一句計畫／做得好的一件／明天只改一件）
+  // are NOT here — they moved to the top-level 交易規劃與檢討 tab (see
+  // renderPlan), which is plannable/reviewable for any date without first
+  // opening that day's 當日日誌.
   function renderDayProcessTab(dateET) {
-    var journal = store.getDayJournal(dateET);
-    var setups = store.getSetups();
-    var setupChecks = setups
-      .map(function (s) {
-        var checked = journal.plannedSetups.indexOf(s) !== -1 ? " checked" : "";
-        return (
-          '<label class="chk"><input type="checkbox" name="plannedSetups" value="' + escapeHtml(s) + '"' + checked + "> " +
-          escapeHtml(s) + "</label>"
-        );
-      })
-      .join("");
-
-    var fieldsForm =
-      '<form id="day-journal-form">' +
-      "<h3>盤前</h3>" +
-      '<div class="field-grid">' +
-      '<label>風險上限（USD，可空）<input type="number" name="riskCapUsd" step="any" value="' +
-      (journal.riskCapUsd === null ? "" : journal.riskCapUsd) + '"></label>' +
-      '<label>一句計畫（可空）<input type="text" name="planLine" maxlength="120" value="' + escapeHtml(journal.planLine || "") + '"></label>' +
-      "</div>" +
-      '<p class="muted" style="margin:8px 0 4px">今天只做哪些 setup 標（可多選，只是計畫，不篩限當天能記的交易）</p>' +
-      '<div class="row">' + (setupChecks || '<span class="muted">尚無 setup 標</span>') + "</div>" +
-      "<h3>盤後</h3>" +
-      '<div class="field-grid">' +
-      '<label>做得好的一件（可空）<input type="text" name="didWell" maxlength="120" value="' + escapeHtml(journal.didWell || "") + '"></label>' +
-      '<label>明天只改一件（可空）<input type="text" name="changeTomorrow" maxlength="120" value="' + escapeHtml(journal.changeTomorrow || "") + '"></label>' +
-      "</div>" +
-      '<p class="row" style="margin-top:14px"><button type="submit" class="primary">存檔</button></p>' +
-      "</form>";
-
-    return fieldsForm + renderProcessLogSection(dateET);
+    return renderProcessLogSection(dateET);
   }
 
   function renderProcessLogSection(dateET) {
@@ -807,7 +806,7 @@
       "<h3>過程紀錄</h3>" +
       list +
       errorsHtml +
-      '<form id="process-log-form">' +
+      '<form id="process-log-form" data-context-date="' + escapeHtml(dateET) + '">' +
       '<label class="full">新增一句（記整個過程，一次一句）<input type="text" name="note" maxlength="160"></label>' +
       '<p class="row" style="margin-top:8px"><button type="submit" class="primary">新增</button></p>' +
       "</form>" +
@@ -957,7 +956,7 @@
 
   function readDayJournalFormInput(form) {
     // Each 當日日誌 sub-tab now renders only ITS OWN fields in this form
-    // (see renderDayBackgroundTab/renderDayProcessTab),
+    // (see renderDayBackgroundTab/renderPlan),
     // so most calls only ever see a subset of these names present in the
     // DOM. A field genuinely absent from the form must read back as
     // `undefined` (not "" / [] ), so mergeDayJournalInput can tell "this
@@ -1256,7 +1255,109 @@
       accountsSection +
       productsSection +
       setupsSection +
+      renderBrokerIoSection() +
+      renderImportReview() +
       "</div>" +
+      "</div>"
+    );
+  }
+
+  // 券商檔案手動上傳／下載 (CSV). 兩種格式的欄位知識都在 js/csv-formats.js
+  // (純函式、有自己的測試) — 這裡只負責觸發讀檔/下載跟畫畫面。沒有拿使用者
+  // 真實的券商檔案對過，所以上傳這條路一律先進 renderImportReview() 那張
+  // 待確認清單，而不是直接存檔：product/setup/成績/執行評等是這個 app 逼你
+  // 自評的欄位，任何券商檔案都不會有，必須讓人自己選才能存（沿用
+  // store.addCard 原本的驗證，沒有為了匯入放寬）。
+  function renderBrokerIoSection() {
+    var fileErrorHtml =
+      state.importReview && state.importReview.fileError
+        ? '<div class="form-errors"><ul><li>' + escapeHtml(state.importReview.fileError) + "</li></ul></div>"
+        : "";
+    return (
+      '<div class="settings-section">' +
+      "<h3>券商檔案（手動上傳／下載）</h3>" +
+      '<p class="muted">支援 Interactive Brokers 的 Activity Statement CSV（Trades 區塊）跟 NinjaTrader／Tradovate 的交易匯出。沒有拿真的券商檔案對過，如果上傳看不懂，把檔案表頭貼給我調整。</p>' +
+      '<p class="row">' +
+      '<button type="button" class="ghost" id="download-ib-csv-btn">下載成 IB 格式 CSV</button>' +
+      '<button type="button" class="ghost" id="download-nt-csv-btn">下載成 NinjaTrader 格式 CSV</button>' +
+      "</p>" +
+      '<label class="full">上傳券商檔案（.csv，自動判斷格式）<input type="file" id="broker-csv-input" accept=".csv,text/csv"></label>' +
+      fileErrorHtml +
+      "</div>"
+    );
+  }
+
+  // 上傳後、存檔前的待確認清單：檔案給的是客觀事實（時間/方向/口數/損益），
+  // 商品/帳戶/setup/成績/執行評等要人揀過才能存 —— 沒有全部揀好就按存檔，
+  // 直接走原本 store.addCard 的驗證，缺什麼就退什麼錯誤，不做另一套規則。
+  function renderImportReview() {
+    var review = state.importReview;
+    if (!review || !review.rows) return "";
+    var accounts = store.getAccounts();
+    var products = store.getProducts();
+    var setups = store.getSetups();
+
+    function optionsFor(list, selected, placeholder) {
+      return (
+        '<option value="">' + escapeHtml(placeholder) + "</option>" +
+        list
+          .map(function (v) {
+            var val = typeof v === "string" ? v : v.id;
+            var label = typeof v === "string" ? v : v.name;
+            return '<option value="' + escapeHtml(val) + '"' + (val === selected ? " selected" : "") + ">" + escapeHtml(label) + "</option>";
+          })
+          .join("")
+      );
+    }
+
+    var pendingCount = review.rows.filter(function (r) { return !r.saved; }).length;
+
+    var rowsHtml = review.rows
+      .map(function (row) {
+        if (row.saved) {
+          return (
+            '<tr><td colspan="11" class="muted">已存檔：' +
+            escapeHtml(row.parsed.dateET) + " " + escapeHtml(row.parsed.timeET) + " " + escapeHtml(row.product || row.parsed.symbolRaw) +
+            "</td></tr>"
+          );
+        }
+        var p = row.parsed;
+        return (
+          '<tr data-import-row="' + escapeHtml(row.key) + '">' +
+          "<td>" + escapeHtml(p.dateET) + " " + escapeHtml(p.timeET) + "</td>" +
+          "<td>" + escapeHtml(p.symbolRaw || "") + "</td>" +
+          "<td>" + escapeHtml(p.side) + "</td>" +
+          "<td>" + p.size + "</td>" +
+          "<td>" + money(p.pnl) + "</td>" +
+          '<td><select data-import-field="product" data-import-key="' + escapeHtml(row.key) + '">' + optionsFor(products, row.product, "選商品") + "</select></td>" +
+          '<td><select data-import-field="accountId" data-import-key="' + escapeHtml(row.key) + '">' + optionsFor(accounts, row.accountId, "選帳戶") + "</select></td>" +
+          '<td><select data-import-field="setup" data-import-key="' + escapeHtml(row.key) + '">' + optionsFor(setups, row.setup, "選 setup") + "</select></td>" +
+          '<td><select data-import-field="grade" data-import-key="' + escapeHtml(row.key) + '">' + optionsFor(GRADES, row.grade, "成績") + "</select></td>" +
+          '<td><select data-import-field="execGrade" data-import-key="' + escapeHtml(row.key) + '">' + optionsFor(GRADES, row.execGrade, "執行") + "</select></td>" +
+          "<td>" +
+          '<button type="button" class="ghost" data-import-save="' + escapeHtml(row.key) + '">存檔</button>' +
+          (row.error ? '<div class="muted" style="margin-top:4px">' + escapeHtml(row.error) + "</div>" : "") +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var skippedNote =
+      review.skipped && review.skipped.length
+        ? '<p class="muted">另外 ' + review.skipped.length + " 列跳過沒有列出來（多半是開倉那一腿，本來就不算一筆已平倉的交易）。</p>"
+        : "";
+
+    return (
+      '<div class="settings-section">' +
+      "<h3>待確認：" + pendingCount + " 筆</h3>" +
+      '<p class="muted">商品／帳戶／setup／成績／執行評等是主觀欄位，檔案裡不會有，要自己選才能存進報告卡。</p>' +
+      '<div class="scroll"><table class="grid">' +
+      "<tr><th>時間</th><th>原始代號</th><th>方向</th><th>口數</th><th>損益</th><th>商品</th><th>帳戶</th><th>setup</th><th>成績</th><th>執行</th><th></th></tr>" +
+      rowsHtml +
+      "</table></div>" +
+      skippedNote +
+      '<p class="row" style="margin-top:8px"><button type="button" class="ghost" id="import-review-dismiss-btn">關閉這份清單</button></p>' +
       "</div>"
     );
   }
@@ -1268,6 +1369,27 @@
       onDataUrl(String(reader.result));
     };
     reader.readAsDataURL(file);
+  }
+
+  function readTextFile(file, onText) {
+    if (!file || !window.FileReader) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      onText(String(reader.result));
+    };
+    reader.readAsText(file);
+  }
+
+  function downloadTextFile(filename, text) {
+    var blob = new Blob([text], { type: "text/csv;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
 
   // ---- 心理遊戲 (mind game) shared rendering (ticket 19) -----------------
@@ -1345,6 +1467,92 @@
     };
   }
 
+  // ---- 交易規劃與檢討 tab: 盤前三欄 + 盤後兩句, plannable/reviewable for
+  // any date up front, plus a browse-everything history list below (same
+  // shape as 心理戰: input on top, every past entry listed underneath) ---
+  //
+  // Lives outside 當日日誌 on purpose: deciding risk cap / setups / plan
+  // BEFORE the trading day (and reviewing after) shouldn't require opening
+  // that day's 當日日誌 first (which itself only opens from a 損益月曆 cell
+  // or an existing 心理戰 entry — awkward for a day that hasn't happened
+  // yet). state.planDate is its own, independently-navigated date — NOT
+  // state.openDayJournalDate — so browsing forward to plan tomorrow never
+  // touches (and isn't reset by) whatever day the 當日日誌 overlay has open.
+  // Saves through the same day-journal-form submit handler as every other
+  // day-journal tab (see readDayJournalFormInput/mergeDayJournalInput).
+  function renderPlan() {
+    var dateET = state.planDate;
+    var journal = store.getDayJournal(dateET);
+    var setups = store.getSetups();
+    var setupChecks = setups
+      .map(function (s) {
+        var checked = journal.plannedSetups.indexOf(s) !== -1 ? " checked" : "";
+        return (
+          '<label class="chk"><input type="checkbox" name="plannedSetups" value="' + escapeHtml(s) + '"' + checked + "> " +
+          escapeHtml(s) + "</label>"
+        );
+      })
+      .join("");
+
+    var form =
+      '<form id="day-journal-form" data-context-date="' + escapeHtml(dateET) + '">' +
+      "<h3>盤前</h3>" +
+      '<div class="field-grid">' +
+      '<label>風險上限（USD，可空）<input type="number" name="riskCapUsd" step="any" value="' +
+      (journal.riskCapUsd === null ? "" : journal.riskCapUsd) + '"></label>' +
+      '<label>一句計畫（可空）<input type="text" name="planLine" maxlength="120" value="' + escapeHtml(journal.planLine || "") + '"></label>' +
+      "</div>" +
+      '<p class="muted" style="margin:8px 0 4px">今天只做哪些 setup 標（可多選，只是計畫，不篩限當天能記的交易）</p>' +
+      '<div class="row">' + (setupChecks || '<span class="muted">尚無 setup 標</span>') + "</div>" +
+      "<h3>盤後</h3>" +
+      '<div class="field-grid">' +
+      '<label>做得好的一件（可空）<input type="text" name="didWell" maxlength="120" value="' + escapeHtml(journal.didWell || "") + '"></label>' +
+      '<label>明天只改一件（可空）<input type="text" name="changeTomorrow" maxlength="120" value="' + escapeHtml(journal.changeTomorrow || "") + '"></label>' +
+      "</div>" +
+      '<p class="row" style="margin-top:14px"><button type="submit" class="primary">存檔</button></p>' +
+      "</form>";
+
+    return (
+      '<div class="panel">' +
+      '<div class="row" style="justify-content:space-between;align-items:center">' +
+      "<h2>交易規劃與檢討</h2>" +
+      '<label>日期<input type="date" id="plan-date-input" value="' + escapeHtml(dateET) + '"></label>' +
+      "</div>" +
+      '<p class="muted">開盤前先想清楚，收盤後回頭檢討：可以先規劃任何一天，不用等當天。</p>' +
+      form +
+      renderPlanHistory() +
+      "</div>"
+    );
+  }
+
+  // Browse every past 盤前/盤後 entry, newest first — clicking a row opens
+  // that day's 當日日誌 (same data-open-day-date mechanism 心理戰 uses),
+  // for the full context (trades, background, 心理遊戲…) around that plan
+  // or review, not just those two short fields on their own.
+  function renderPlanHistory() {
+    var entries = store.getAllPlanReviewEntries();
+    if (!entries.length) {
+      return '<p class="muted" style="margin-top:16px">還沒有任何交易規劃或檢討紀錄。</p>';
+    }
+    var rows = entries
+      .map(function (j) {
+        var bits = [];
+        if (j.riskCapUsd !== null) bits.push("風險上限 " + money(j.riskCapUsd));
+        if (j.planLine) bits.push(escapeHtml(j.planLine));
+        if (j.plannedSetups.length) bits.push("只做：" + escapeHtml(j.plannedSetups.join("、")));
+        if (j.didWell) bits.push("做得好：" + escapeHtml(j.didWell));
+        if (j.changeTomorrow) bits.push("明天改：" + escapeHtml(j.changeTomorrow));
+        return (
+          '<li class="plan-history-item clickable" data-open-day-date="' + escapeHtml(j.dateET) + '">' +
+          '<div class="plan-history-date">' + escapeHtml(j.dateET) + "</div>" +
+          '<div class="plan-history-bits">' + bits.join("・") + "</div>" +
+          "</li>"
+        );
+      })
+      .join("");
+    return '<ul class="plan-history-list" style="margin-top:16px">' + rows + "</ul>";
+  }
+
   // ---- 心理戰 tab: browse ALL 心理遊戲 entries (card- and day-bound) -------
   //
   // The previously-stub tab from ticket 13. Every entry is reachable from
@@ -1376,12 +1584,13 @@
       '<span class="brand">交易日誌</span>' +
       '<nav class="tabs">' +
       '<button class="' + (state.tab === "cmd" ? "on" : "") + '" data-tab="cmd">指揮中心</button>' +
+      '<button class="' + (state.tab === "plan" ? "on" : "") + '" data-tab="plan">交易規劃與檢討</button>' +
       '<button class="' + (state.tab === "psych" ? "on" : "") + '" data-tab="psych">心理戰</button>' +
       "</nav>" +
       '<button class="ghost topbar-right" id="open-settings-btn">設定</button>' +
       "</div>";
 
-    var body = state.tab === "cmd" ? renderCommandCenter() : renderPsych();
+    var body = state.tab === "cmd" ? renderCommandCenter() : state.tab === "plan" ? renderPlan() : renderPsych();
 
     // Four mutually-exclusive overlays: 交易報告卡 detail (openCardId), 當日
     // 日誌 (openDayJournalDate), the new-card form (formOpen), and settings
@@ -1591,6 +1800,16 @@
       filterClearBtn.addEventListener("click", function () {
         state.filters = store.createDefaultFilters();
         state.secondarySelection = null;
+        render();
+      });
+    }
+
+    // ---- 交易規劃與檢討 date nav ---------------------------------------
+
+    var planDateInput = document.getElementById("plan-date-input");
+    if (planDateInput) {
+      planDateInput.addEventListener("change", function (e) {
+        state.planDate = e.currentTarget.value || todayET();
         render();
       });
     }
@@ -1857,6 +2076,115 @@
       });
     }
 
+    // ---- 券商檔案手動上傳／下載 ------------------------------------------
+
+    var downloadIbBtn = document.getElementById("download-ib-csv-btn");
+    if (downloadIbBtn) {
+      downloadIbBtn.addEventListener("click", function () {
+        if (!CsvFormats) return;
+        var csv = CsvFormats.toCsv(store.getRealCards(), store.getAccounts(), "ib");
+        downloadTextFile("交易日誌-ib-" + todayET() + ".csv", csv);
+      });
+    }
+    var downloadNtBtn = document.getElementById("download-nt-csv-btn");
+    if (downloadNtBtn) {
+      downloadNtBtn.addEventListener("click", function () {
+        if (!CsvFormats) return;
+        var csv = CsvFormats.toCsv(store.getRealCards(), store.getAccounts(), "ninjatrader");
+        downloadTextFile("交易日誌-ninjatrader-" + todayET() + ".csv", csv);
+      });
+    }
+
+    var brokerCsvInput = document.getElementById("broker-csv-input");
+    if (brokerCsvInput) {
+      brokerCsvInput.addEventListener("change", function (e) {
+        var file = e.currentTarget.files && e.currentTarget.files[0];
+        if (!file || !CsvFormats) return;
+        readTextFile(file, function (text) {
+          var format = CsvFormats.detectFormat(text);
+          if (!format) {
+            state.importReview = { format: null, fileError: "看不懂這是哪一種格式的檔案（不像 IB，也不像 NinjaTrader/Tradovate）", rows: null };
+            render();
+            return;
+          }
+          var result = CsvFormats.parse(text, format, store.getProducts());
+          if (!result.ok) {
+            state.importReview = { format: format, fileError: result.error, rows: null };
+            render();
+            return;
+          }
+          var defaultAccountId = store.getAccounts()[0] ? store.getAccounts()[0].id : null;
+          var rows = result.trades.map(function (t, i) {
+            return {
+              key: format + "-" + i + "-" + Date.now(),
+              parsed: t,
+              product: t.product,
+              accountId: defaultAccountId,
+              setup: null,
+              grade: null,
+              execGrade: null,
+              saved: false,
+              error: null,
+            };
+          });
+          state.importReview = { format: format, fileError: null, rows: rows, skipped: result.skipped };
+          render();
+        });
+      });
+    }
+
+    var importFieldEls = app.querySelectorAll("[data-import-field]");
+    for (var ifi = 0; ifi < importFieldEls.length; ifi++) {
+      importFieldEls[ifi].addEventListener("change", function (e) {
+        var key = e.currentTarget.getAttribute("data-import-key");
+        var field = e.currentTarget.getAttribute("data-import-field");
+        var row = state.importReview && state.importReview.rows.filter(function (r) { return r.key === key; })[0];
+        if (!row) return;
+        row[field] = e.currentTarget.value || null;
+        render();
+      });
+    }
+
+    var importSaveBtns = app.querySelectorAll("[data-import-save]");
+    for (var isv = 0; isv < importSaveBtns.length; isv++) {
+      importSaveBtns[isv].addEventListener("click", function (e) {
+        var key = e.currentTarget.getAttribute("data-import-save");
+        var row = state.importReview && state.importReview.rows.filter(function (r) { return r.key === key; })[0];
+        if (!row) return;
+        var p = row.parsed;
+        var result = store.addCard({
+          product: row.product,
+          setup: row.setup,
+          accountId: row.accountId,
+          grade: row.grade,
+          execGrade: row.execGrade,
+          side: p.side,
+          size: p.size,
+          pnl: p.pnl,
+          fee: p.fee,
+          entryPrice: p.entryPrice,
+          exitPrice: p.exitPrice,
+          dateET: p.dateET,
+          timeET: p.timeET,
+        });
+        if (result.ok) {
+          row.saved = true;
+          row.error = null;
+        } else {
+          row.error = result.errors.join("、");
+        }
+        render();
+      });
+    }
+
+    var importDismissBtn = document.getElementById("import-review-dismiss-btn");
+    if (importDismissBtn) {
+      importDismissBtn.addEventListener("click", function () {
+        state.importReview = null;
+        render();
+      });
+    }
+
     // ---- 當日日誌 -------------------------------------------------------
 
     var closeDayJournalBtn = document.getElementById("close-day-journal-btn");
@@ -1872,12 +2200,21 @@
     if (dayJournalForm) {
       dayJournalForm.addEventListener("submit", function (e) {
         e.preventDefault();
-        // store.setDayJournal() upserts the whole record, so a single tab's
-        // form must be merged onto the current record first (see
-        // mergeDayJournalInput) — otherwise saving 盤前 would blank 背景/盤後.
+        // This same form markup is rendered from two independently-navigated
+        // contexts — the 當日日誌 overlay's 背景 tab (state.openDayJournalDate)
+        // and the top-level 交易規劃與檢討 tab (state.planDate) — so the date
+        // to save to is read off the form itself (data-context-date) rather
+        // than off either state field; the handler never has to guess which
+        // one is "the" active date.
+        //
+        // store.setDayJournal() upserts the whole record, so a single form
+        // must be merged onto the current record first (see
+        // mergeDayJournalInput) — otherwise saving 盤前/盤後 would blank 背景,
+        // and saving 背景 would blank 盤前/盤後.
+        var dateET = dayJournalForm.getAttribute("data-context-date");
         var partial = readDayJournalFormInput(dayJournalForm);
-        var merged = mergeDayJournalInput(state.openDayJournalDate, partial);
-        store.setDayJournal(state.openDayJournalDate, merged);
+        var merged = mergeDayJournalInput(dateET, partial);
+        store.setDayJournal(dateET, merged);
         render();
       });
     }
@@ -1887,7 +2224,7 @@
       processLogForm.addEventListener("submit", function (e) {
         e.preventDefault();
         var input = readProcessLogFormInput(processLogForm);
-        input.dateET = state.openDayJournalDate;
+        input.dateET = processLogForm.getAttribute("data-context-date");
         var result = store.addProcessLogEntry(input);
         state.processLogErrors = result.ok ? [] : result.errors;
         render();
