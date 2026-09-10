@@ -1,282 +1,788 @@
 :root {
-  --bg: #070b10;
-  --panel: #10161e;
-  --panel-2: #151d27;
-  --line: #243041;
-  --text: #e8eef6;
-  --muted: #8b9bb0;
-  --profit: #f43f5e;
-  --loss: #22c55e;
-  --accent: #38bdf8;
-  --warn: #fbbf24;
+  --bg: #0b0f14;
+  --panel: #161b22;
+  --line: #2a3340;
+  --text: #e6edf3;
+  --muted: #8b9bb4;
+  --sky: #7dd3fc;
+  --green: #4ade80;
+  --red: #f87171;
+  --amber: #fbbf24;
+  --pink: #f472b6;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 html,
 body {
-  background: var(--bg);
-  color: var(--text);
-}
-
-body {
-  min-height: 100vh;
-  background-image:
-    radial-gradient(1200px 500px at 10% -10%, rgba(56, 189, 248, 0.08), transparent 50%),
-    radial-gradient(900px 400px at 90% 0%, rgba(244, 63, 94, 0.06), transparent 45%);
-}
-
-.num {
-  font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.profit {
-  color: var(--profit);
-}
-
-.loss {
-  color: var(--loss);
-}
-
-.flat {
-  color: var(--muted);
-}
-
-.panel {
-  background: linear-gradient(180deg, rgba(21, 29, 39, 0.92), rgba(16, 22, 30, 0.92));
-  border: 1px solid var(--line);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
-}
-
-.cal-grid {
-  display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.cal-cell {
-  min-height: 86px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  border-radius: 10px;
-  padding: 8px;
-  text-align: left;
-  transition: border-color 0.15s ease, transform 0.15s ease;
-}
-
-.cal-cell:hover:not(:disabled) {
-  border-color: var(--accent);
-  transform: translateY(-1px);
-}
-
-.cal-cell.is-today {
-  outline: 1px solid rgba(56, 189, 248, 0.55);
-}
-
-.cal-cell.is-muted {
-  opacity: 0.38;
-}
-
-.cal-cell.has-trades {
-  cursor: pointer;
-}
-
-.strategy-chip {
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  color: var(--muted);
-}
-
-.strategy-chip.is-active,
-.side-chip.is-active,
-.page-nav-btn.is-active,
-.modal-tab.is-active {
-  border-color: rgba(56, 189, 248, 0.7);
-  color: #e0f2fe;
-  background: rgba(56, 189, 248, 0.12);
-}
-
-.side-chip,
-.modal-tab {
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  color: var(--muted);
-}
-
-.week-total {
-  min-height: 86px;
-  border: 1px dashed rgba(56, 189, 248, 0.35);
-  background: rgba(56, 189, 248, 0.06);
-  border-radius: 10px;
-  padding: 8px;
-}
-
-.modal-backdrop {
-  background: rgba(4, 8, 12, 0.72);
-  backdrop-filter: blur(6px);
-}
-
-.field {
-  border: 1px solid var(--line);
-  background: rgba(2, 6, 12, 0.6);
-  color: var(--text);
-}
-
-.field:focus {
-  outline: none;
-  border-color: rgba(56, 189, 248, 0.7);
-}
-
-.form-mode.is-edit {
-  color: #fde68a;
-  background: rgba(251, 191, 36, 0.12);
-}
-
-.psych-forms > form {
-  display: flex;
-  flex-direction: column;
+  margin: 0;
   height: 100%;
 }
 
-.psych-form-actions {
-  margin-top: auto;
-  padding-top: 0.5rem;
-}
-
-.psych-log-wrap {
-  max-height: 28rem;
-  overflow: auto;
-}
-
-.psych-log thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--panel);
-  box-shadow: 0 1px 0 var(--line);
-}
-
-.psych-log tbody tr:hover td {
-  background: rgba(255, 255, 255, 0.035);
-}
-
-.kind-pill {
-  display: inline-block;
-  min-width: 2.25rem;
-}
-
-.kind-mind {
-  color: #7dd3fc;
-}
-
-.kind-beh {
-  color: #c4b5fd;
-}
-
-.kind-evt {
-  color: #fcd34d;
-}
-
-.th-sort {
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-}
-
-.th-sort:hover {
+body {
+  font-family: "PingFang TC", "Noto Sans TC", ui-sans-serif, system-ui, sans-serif;
+  background: var(--bg);
   color: var(--text);
+  font-size: 14px;
 }
 
-.th-sort.is-asc::after {
-  content: " ▲";
-  font-size: 10px;
+button,
+select,
+input {
+  font: inherit;
+  color: inherit;
 }
 
-.th-sort.is-desc::after {
-  content: " ▼";
-  font-size: 10px;
+button {
+  cursor: pointer;
 }
 
-.psych-log {
-  table-layout: fixed;
-  width: 100%;
-  border-collapse: collapse;
+.topbar {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
 }
 
-.psych-log .col-time {
-  width: 11rem;
+.brand {
+  font-weight: 700;
+  font-size: 15px;
 }
 
-.psych-log .col-session {
-  width: 5.5rem;
+nav.tabs {
+  display: flex;
+  gap: 6px;
 }
 
-.psych-log .col-kind {
-  width: 3.5rem;
-}
-
-.psych-log .col-status {
-  width: 32%;
-}
-
-.psych-log .col-note {
-  width: auto;
-}
-
-.psych-log .col-act {
-  width: 6.5rem;
-}
-
-.psych-log th,
-.psych-log td {
-  vertical-align: top;
-}
-
-.psych-log .cell-clip {
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  line-height: 1.45;
-}
-
-#kpi-strip {
-  overflow: visible;
-}
-
-.kpi-hover {
-  position: relative;
-}
-
-.kpi-hover-pop {
-  position: absolute;
-  left: 12px;
-  bottom: calc(100% - 6px);
-  z-index: 40;
-  min-width: 9.5rem;
-  padding: 10px 12px;
-  border-radius: 10px;
+nav.tabs button {
   border: 1px solid var(--line);
-  background: #0c1219;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
-  pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(4px);
-  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 6px 12px;
 }
 
-.kpi-hover:hover .kpi-hover-pop {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
+nav.tabs button.on {
+  background: #0ea5e9;
+  color: #0f172a;
+  border-color: #0ea5e9;
+  font-weight: 600;
 }
 
-.kpi-hover-label {
-  margin: 0;
+.topbar-right {
+  margin-left: auto;
+}
+
+.col {
+  padding: 12px 16px 60px;
+}
+
+.demo-banner {
+  background: #422006;
+  color: #fde68a;
+  border: 1px solid #92620a;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.heroes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   font-size: 11px;
   color: var(--muted);
 }
 
-.kpi-hover-amt {
+.filter-field input,
+.filter-field select {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.equity-curve-wrap {
+  position: relative;
+}
+
+.equity-curve {
+  width: 100%;
+  height: 140px;
+  display: block;
+}
+
+.eq-point {
+  fill: var(--sky);
+  fill-opacity: 0;
+  stroke: none;
+  cursor: pointer;
+}
+
+.eq-point:hover {
+  fill-opacity: 0.9;
+}
+
+.equity-tooltip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.equity-tooltip .d {
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.settings-section {
+  margin-bottom: 18px;
+}
+
+.settings-section h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.settings-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.settings-add-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-add-form input {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--text);
+  flex: 1;
+  min-width: 120px;
+}
+
+.hero {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.hero .l {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.hero .v {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+
+.profit {
+  color: var(--green);
+}
+
+.loss {
+  color: var(--red);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.primary {
+  background: #0ea5e9;
+  color: #0f172a;
+  border: 1px solid #0ea5e9;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-weight: 600;
+}
+
+.ghost {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+table.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+table.grid th,
+table.grid td {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+table.grid th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 11px;
+}
+
+tr.demo-row {
+  opacity: 0.75;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.72);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 20;
+}
+
+.sheet {
+  width: min(560px, 100%);
+  background: var(--bg);
+  border-left: 1px solid var(--line);
+  padding: 16px;
+  overflow: auto;
+}
+
+.day-tabs {
+  margin: 12px 0 14px;
+  flex-wrap: wrap;
+}
+
+.day-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.day-summary-row:last-child {
+  border-bottom: none;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+.field-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.field-grid input,
+.field-grid select {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--text);
+}
+
+.req {
+  color: var(--amber);
+}
+
+.form-errors {
+  background: #3f1a1a;
+  border: 1px solid #7f1d1d;
+  color: #fecaca;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.form-errors ul {
   margin: 4px 0 0;
-  font-size: 1.05rem;
+  padding-left: 18px;
+}
+
+tr.clickable {
+  cursor: pointer;
+}
+
+tr.clickable:hover {
+  background: rgba(125, 211, 252, 0.08);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+.detail-field .l {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.detail-field .v {
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.shot {
+  width: 140px;
+}
+
+.shot img {
+  width: 100%;
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.shot-remove {
+  width: 100%;
+  margin-top: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.paste-zone {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  outline: none;
+}
+
+.paste-zone:focus {
+  border-color: var(--sky);
+}
+
+/* 損益月曆 (P&L calendar) */
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr) 88px;
+  gap: 4px;
+}
+
+.cal-hd {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  padding: 4px 0;
+}
+
+.cal-day {
+  min-height: 58px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  text-align: left;
+  background: #12171e;
+}
+
+.cal-day:not(.empty):hover {
+  outline: 1px solid var(--sky);
+  cursor: pointer;
+}
+
+.cal-day.empty {
+  border-color: transparent;
+  background: transparent;
+}
+
+.cal-day.up {
+  background: #14532d;
+}
+
+.cal-day.down {
+  background: #7f1d1d;
+}
+
+.cal-day-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+}
+
+.cal-day .n {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.cal-dots {
+  display: flex;
+  gap: 3px;
+}
+
+.cal-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.cal-dot.econ {
+  background: var(--amber);
+}
+
+.cal-dot.mind {
+  background: var(--pink);
+}
+
+.cal-dot.review {
+  background: var(--sky);
+}
+
+.cal-day .p {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.cal-day .c {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.cal-week {
+  min-height: 58px;
+  border-radius: 8px;
+  background: #1a2330;
+  border: 1px solid var(--line);
+  padding: 6px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+/* 當日日誌 (daily journal) */
+
+.field-grid label.full {
+  grid-column: 1 / -1;
+}
+
+label.full {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+label.full input {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--text);
+}
+
+label.chk {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+/* 心理遊戲 / 心理戰 (ticket 19) */
+
+.mindgame-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.mindgame-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mindgame-item {
+  border: 1px solid var(--line);
+  background: #12171e;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.mindgame-item.clickable {
+  cursor: pointer;
+}
+
+.mindgame-item.clickable:hover {
+  outline: 1px solid var(--sky);
+}
+
+.mindgame-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.mindgame-type {
+  font-weight: 600;
+}
+
+.mindgame-intensity {
+  color: var(--amber);
+  font-variant-numeric: tabular-nums;
+}
+
+.mindgame-binding {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.mindgame-note {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.plan-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-history-item {
+  border: 1px solid var(--line);
+  background: #12171e;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.plan-history-item:hover {
+  outline: 1px solid var(--sky);
+}
+
+.plan-history-date {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.plan-history-bits {
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.mindgame-form {
+  margin-top: 6px;
+}
+
+/* 盤前盤後過程紀錄 */
+
+.process-log-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.process-log-item {
+  border: 1px solid var(--line);
+  background: #12171e;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+/* 分解表 · 時段熱力圖 · 交易報告卡清單聯動 (ticket 16) */
+
+.chip {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+.chip.on {
+  background: #0ea5e9;
+  color: #0f172a;
+  border-color: #0ea5e9;
+  font-weight: 600;
+}
+
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+th.sortable:hover {
+  color: var(--text);
+}
+
+tr.picked td {
+  background: rgba(125, 211, 252, 0.12);
+}
+
+.heatmap-grid {
+  display: grid;
+  grid-template-columns: 32px repeat(24, minmax(28px, 1fr));
+  gap: 2px;
+  margin: 6px 0 4px;
+}
+
+.heatmap-hd {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  padding: 2px 0;
+}
+
+.heatmap-hd.corner {
+  background: transparent;
+}
+
+.heatmap-wd {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.heatmap-cell {
+  min-height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #12171e;
+  color: var(--text);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  padding: 0;
+}
+
+.heatmap-cell.empty {
+  background: transparent;
+  border-color: transparent;
+}
+
+.heatmap-cell.pos {
+  background: #14532d;
+}
+
+.heatmap-cell.neg {
+  background: #7f1d1d;
+}
+
+.heatmap-cell.zero {
+  background: #1a2330;
+}
+
+.heatmap-cell.picked {
+  outline: 2px solid var(--sky);
+}
+
+.heatmap-cell:not(.empty):hover {
+  outline: 1px solid var(--sky);
+  cursor: pointer;
+}
+
+/* 經濟事件 (economic events, ticket 17) */
+
+.econ-input {
+  width: 84px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 6px;
+  color: var(--text);
+  font-size: 12px;
 }
