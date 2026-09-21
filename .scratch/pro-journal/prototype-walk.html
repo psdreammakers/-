@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PROTOTYPE · 四面加心理戰怎麼走</title>
+  <style>
+    :root {
+      --bg: #0b0f14; --panel: #161b22; --line: #2a3340; --text: #e6edf3;
+      --muted: #8b9bb4; --sky: #7dd3fc; --green: #4ade80; --red: #f87171; --amber: #fbbf24;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: "PingFang TC", "Noto Sans TC", ui-sans-serif, system-ui, sans-serif;
+      background: var(--bg); color: var(--text); font-size: 13px;
+    }
+    button, select { font: inherit; color: inherit; cursor: pointer; }
+    .proto-banner { background: #422006; color: #fde68a; padding: 8px 16px; font-size: 12px; }
+    .wrap { display: flex; flex-direction: column; min-height: calc(100% - 92px); }
+    .topbar {
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+      padding: 10px 16px; border-bottom: 1px solid var(--line);
+    }
+    .walk-q { color: var(--muted); font-size: 12px; padding: 8px 16px 0; max-width: 70rem; }
+    nav.tabs { display: flex; gap: 6px; }
+    nav.tabs button, .chip, .ghost, .primary, select.filter {
+      border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 10px; color: var(--text);
+    }
+    nav.tabs button.on, .chip.on, tr.picked td { background: #0ea5e9; color: #0f172a; border-color: #0ea5e9; font-weight: 600; }
+    tr.picked td { border-bottom-color: #0ea5e9; }
+    .primary { background: #0ea5e9; color: #0f172a; border-color: #0ea5e9; font-weight: 600; }
+    .col { padding: 12px 16px 88px; overflow: auto; }
+    .heroes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 10px; }
+    @media (max-width: 1100px) { .heroes { grid-template-columns: repeat(3, 1fr); } }
+    .hero, .panel {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+    }
+    .hero .l, .stats .l, dt { font-size: 11px; color: var(--muted); }
+    .hero .v { font-size: 22px; font-variant-numeric: tabular-nums; margin-top: 4px; }
+    .hero .s { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .profit { color: var(--green); } .loss { color: var(--red); }
+    .split { display: grid; grid-template-columns: 1.45fr 1fr; gap: 10px; margin-bottom: 10px; }
+    @media (max-width: 1000px) { .split { grid-template-columns: 1fr; } }
+    .panel h2, .panel h3 { margin: 0 0 8px; font-size: 13px; }
+    .chart { position: relative; }
+    svg.curve { width: 100%; height: 240px; display: block; }
+    .tip {
+      position: absolute; pointer-events: none; background: #0b1220; border: 1px solid var(--line);
+      border-radius: 10px; padding: 8px 10px; min-width: 160px; display: none; z-index: 5;
+      box-shadow: 0 8px 24px rgba(0,0,0,.4);
+    }
+    .tip.on { display: block; }
+    .tip b { display: block; margin-bottom: 4px; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+    .stats div { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+    .cal-wrap { display: grid; grid-template-columns: 1fr 72px; gap: 6px; }
+    .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+    .cal .hd { font-size: 11px; color: var(--muted); text-align: center; padding: 4px 0; }
+    .day {
+      min-height: 62px; border: 0; border-radius: 8px; padding: 6px; text-align: left; background: #12171e;
+    }
+    .day:hover { outline: 1px solid var(--sky); }
+    .day.on { outline: 2px solid var(--sky); }
+    .day.up { background: #14532d; } .day.down { background: #7f1d1d; }
+    .day.dim { opacity: .35; }
+    .day .n { font-size: 11px; color: var(--muted); }
+    .day .p { font-variant-numeric: tabular-nums; font-size: 13px; }
+    .day .c { font-size: 10px; color: var(--muted); }
+    .weeks { display: grid; gap: 4px; }
+    .week { min-height: 62px; border-radius: 8px; background: #1a2330; border: 0; padding: 6px; text-align: right; }
+    .heat { display: grid; grid-template-columns: 22px repeat(24, 1fr); gap: 2px; font-size: 10px; margin-top: 8px; }
+    .heat b { color: var(--muted); font-weight: 400; }
+    .cell { height: 16px; border-radius: 2px; background: #12171e; border: 0; padding: 0; }
+    .cell.has { background: #14532d; } .cell.bad { background: #7f1d1d; }
+    .cell.on { outline: 2px solid var(--sky); }
+    table.grid { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    table.grid th, table.grid td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    table.grid th { color: var(--muted); font-weight: 500; font-size: 11px; }
+    table.grid th.sort { cursor: pointer; user-select: none; }
+    table.grid th.sort:hover { color: var(--sky); }
+    tr.clickable:hover { background: #12171e; cursor: pointer; }
+    .fields { display: grid; grid-template-columns: 140px 1fr; gap: 0; }
+    .fields div { display: contents; }
+    .fields dt, .fields dd { margin: 0; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+    .fields dt { color: var(--muted); }
+    .overlay { position: fixed; inset: 0; background: rgba(2,6,23,.72); display: flex; justify-content: flex-end; z-index: 20; }
+    .sheet { width: min(720px, 100%); background: var(--bg); border-left: 1px solid var(--line); padding: 16px; overflow: auto; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .note { font-size: 12px; color: var(--amber); margin: 0 0 8px; }
+    .state { font-size: 11px; color: var(--muted); padding: 6px 16px; border-top: 1px solid var(--line); }
+    .switcher {
+      position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 8px;
+      background: #f8fafc; color: #0f172a; border-radius: 999px; padding: 8px 10px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.45); z-index: 40; font-weight: 600;
+    }
+    .switcher button { border: 0; background: #e2e8f0; border-radius: 999px; width: 32px; height: 32px; }
+    .label { font-size: 12px; min-width: 16rem; text-align: center; }
+    .scroll { overflow: auto; }
+  </style>
+</head>
+<body>
+  <div class="proto-banner">
+    <b>丟棄線框 · F</b> · 月曆獨立（點一天只開日誌，不篩別的）。
+    分解表、時段熱力圖、交易報告卡三個才聯動。曲線可指可點。風報比＝平均賺÷|平均賠|（大卡）。成績是你打的。
+  </div>
+  <div class="wrap" id="app"></div>
+  <div class="state" id="state"></div>
+  <div class="switcher" id="switcher"></div>
+<script>
+const TRADES = [
+  { id:"t01", date:"2026-09-01", time:"09:41", product:"MNQ", setup:"突破", side:"多", size:2, pnl:180, grade:"B", exec:"B", account:"主帳戶" },
+  { id:"t02", date:"2026-09-02", time:"10:12", product:"MES", setup:"回歸", side:"空", size:1, pnl:-40, grade:"C", exec:"C", account:"主帳戶" },
+  { id:"t04", date:"2026-09-04", time:"14:05", product:"MNQ", setup:"開盤區間", side:"多", size:2, pnl:90, grade:"B", exec:"A", account:"主帳戶" },
+  { id:"t1",  date:"2026-09-08", time:"09:42", product:"MNQ", setup:"突破", side:"多", size:2, pnl:240, grade:"B", exec:"B", account:"主帳戶" },
+  { id:"t2",  date:"2026-09-08", time:"15:12", product:"MNQ", setup:"回歸", side:"空", size:1, pnl:-80, grade:"D", exec:"C", account:"主帳戶" },
+  { id:"t3",  date:"2026-09-10", time:"10:05", product:"MES", setup:"開盤區間", side:"多", size:3, pnl:120, grade:"A", exec:"A", account:"主帳戶" },
+  { id:"t11", date:"2026-09-11", time:"11:20", product:"MNQ", setup:"突破", side:"多", size:1, pnl:60, grade:"B", exec:"B", account:"主帳戶" },
+  { id:"t15", date:"2026-09-15", time:"09:35", product:"MNQ", setup:"突破", side:"多", size:2, pnl:200, grade:"A", exec:"B", account:"主帳戶" },
+  { id:"t16", date:"2026-09-16", time:"15:40", product:"MES", setup:"回歸", side:"空", size:2, pnl:-120, grade:"D", exec:"D", account:"主帳戶" },
+  { id:"t18", date:"2026-09-18", time:"10:02", product:"MNQ", setup:"開盤區間", side:"多", size:1, pnl:50, grade:"C", exec:"B", account:"主帳戶" },
+  { id:"t21", date:"2026-09-21", time:"13:10", product:"MES", setup:"回歸", side:"空", size:1, pnl:-30, grade:"C", exec:"C", account:"主帳戶" },
+  { id:"t22", date:"2026-09-22", time:"09:50", product:"MNQ", setup:"突破", side:"多", size:2, pnl:110, grade:"B", exec:"A", account:"主帳戶" },
+  { id:"t24", date:"2026-09-24", time:"11:15", product:"MES", setup:"開盤區間", side:"多", size:2, pnl:70, grade:"B", exec:"B", account:"主帳戶" },
+  { id:"t25", date:"2026-09-25", time:"14:44", product:"MNQ", setup:"回歸", side:"空", size:1, pnl:-90, grade:"D", exec:"C", account:"主帳戶" },
+];
+const PSYCHS = [
+  { id:"p1", type:"想翻本", intensity:7, tradeId:"t2", date:"2026-09-08", note:"回歸虧了想撈回來" },
+  { id:"p2", type:"怕錯過", intensity:5, tradeId:null, date:"2026-09-09", note:"會議中沒做，一直想進去" },
+];
+const JOURNALS = {
+  "2026-09-08": { bg:"", risk:"400", setups:"突破", plan:"只做突破", good:"第一筆守紀律", change:"回歸不該做" },
+  "2026-09-09": { bg:"下午會議", risk:"", setups:"", plan:"觀望", good:"", change:"" },
+  "2026-09-10": { bg:"跳空", risk:"", setups:"開盤區間", plan:"", good:"", change:"" },
+};
+const WEEKDAYS = ["日","一","二","三","四","五","六"];
+const INITIAL = 10000;
+const DIMS = { all:"全部", setup:"setup", product:"商品", grade:"成績" };
+const GRADES = ["A", "B", "C", "D"];
+const BCOLS = [
+  ["title", "主標題"],
+  ["n", "筆數"],
+  ["winrate", "勝率"],
+  ["exp", "期望值"],
+  ["avgW", "平均賺"],
+  ["avgL", "平均賠"],
+  ["pf", "賺賠比"],
+  ["rr", "風報比"],
+  ["eq", "累積權益"],
+];
+const TCOLS = [
+  ["time", "時間"],
+  ["account", "帳戶"],
+  ["product", "商品"],
+  ["setup", "setup"],
+  ["side", "方向"],
+  ["size", "口數"],
+  ["grade", "成績"],
+  ["exec", "執行"],
+  ["pnl", "損益"],
+];
+const NAMES = { F:"F 月曆獨立 · 三件聯動" };
+const DESCS = {
+  F: "月曆不跟別的聯動：點一天只開當日日誌。分解表、時段熱力圖、交易報告卡共用一個篩選。點曲線看／進那天，不改這三件的篩選。",
+};
+
+let S = {
+  variant: "F",
+  screen: "cmd",
+  date: "2026-09-10",
+  tradeId: null,
+  psychId: null,
+  filter: null,
+  dim: "all",
+  sortCol: "eq",
+  sortDir: "desc",
+  tradeSortCol: "time",
+  tradeSortDir: "desc",
+  overlay: null,
+  hover: null,
+};
+
+function money(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  const s = (n > 0 ? "+" : "") + n;
+  return `<span class="${n > 0 ? "profit" : n < 0 ? "loss" : ""}">${s}</span>`;
+}
+function tradeById(id) { return TRADES.find((t) => t.id === id); }
+function tradesOn(date, list) { return list.filter((t) => t.date === date); }
+function statsOf(list) {
+  const pnl = list.reduce((s,t) => s + t.pnl, 0);
+  const wins = list.filter((t) => t.pnl > 0);
+  const losses = list.filter((t) => t.pnl < 0);
+  const sumWin = wins.reduce((s,t) => s + t.pnl, 0);
+  const sumLoss = losses.reduce((s,t) => s + t.pnl, 0);
+  const avgW = wins.length ? Math.round(sumWin / wins.length) : null;
+  const avgL = losses.length ? Math.round(sumLoss / losses.length) : null;
+  const rr = avgW != null && avgL != null ? avgW / Math.abs(avgL) : null;
+  const pf = sumLoss ? sumWin / Math.abs(sumLoss) : null;
+  return {
+    n: list.length, pnl, wins: wins.length, losses: losses.length,
+    avgW, avgL, rr, pf, exp: list.length ? Math.round(pnl / list.length) : null,
+    maxW: list.length ? Math.max(...list.map((t) => t.pnl)) : null,
+    maxL: list.length ? Math.min(...list.map((t) => t.pnl)) : null,
+    sumWin, sumLoss, fee: 0,
+  };
+}
+function matchFilter(t, f) {
+  if (!f) return true;
+  if (f.kind === "heat") {
+    const d = new Date(t.date + "T12:00:00");
+    return d.getDay() === f.wd && Number(t.time.slice(0, 2)) === f.hour;
+  }
+  if (f.kind === "break") return t[f.dim] === f.key;
+  return true;
+}
+function trio() { return TRADES.filter((t) => matchFilter(t, S.filter)); }
+function chipLabel() {
+  const f = S.filter;
+  if (!f) return "全部";
+  if (f.kind === "heat") return `週${WEEKDAYS[f.wd]} ${f.hour}時`;
+  return `${DIMS[f.dim]} · ${f.key}`;
+}
+function setVariant(v) {
+  S.variant = v; S.screen = "cmd"; S.overlay = null; S.filter = null; S.hover = null;
+  const u = new URL(location.href);
+  u.searchParams.set("variant", v);
+  history.replaceState({}, "", u);
+  render();
+}
+function go(patch) { Object.assign(S, patch); render(); }
+
+function dayPoints(list) {
+  const initial = 10000;
+  const map = new Map();
+  list.slice().sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time)).forEach((t) => {
+    const cur = map.get(t.date) || { date: t.date, pnl: 0, n: 0, wins: 0 };
+    cur.pnl += t.pnl; cur.n += 1; if (t.pnl > 0) cur.wins += 1;
+    map.set(t.date, cur);
+  });
+  const days = [...map.values()].sort((a,b) => a.date.localeCompare(b.date));
+  let eq = initial;
+  return days.map((d) => { eq += d.pnl; return { ...d, eq }; });
+}
+function curveSvg(list) {
+  const pts = dayPoints(list);
+  const w = 680, h = 240, p = 28;
+  if (!pts.length) return `<p class="muted">沒有權益線</p>`;
+  const ys = pts.map((x) => x.eq);
+  const min = Math.min(...ys, 10000) - 50, max = Math.max(...ys, 10000) + 50;
+  const x = (i) => p + (pts.length === 1 ? (w-p*2)/2 : i / (pts.length - 1) * (w - p * 2));
+  const y = (v) => h - p - ((v - min) / (max - min)) * (h - p * 2);
+  const d = pts.map((pt, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(pt.eq).toFixed(1)}`).join(" ");
+  const dots = pts.map((pt, i) => {
+    const on = S.date === pt.date && (S.overlay === "journal" || S.hover != null);
+    return `<circle class="cdot" data-act="curve" data-i="${i}" cx="${x(i)}" cy="${y(pt.eq)}" r="${on?6:5}" fill="${on?"#7dd3fc":"#4ade80"}" stroke="#0b0f14" stroke-width="2"/>`;
+  }).join("");
+  return `<svg class="curve" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <path d="${d}" fill="none" stroke="#4ade80" stroke-width="2"/>
+    ${dots}
+  </svg>`;
+}
+function heatGrid(list) {
+  const hours = [...Array(24).keys()];
+  const map = new Map();
+  for (const t of list) {
+    const wd = new Date(t.date + "T12:00:00").getDay();
+    const hour = Number(t.time.slice(0, 2));
+    const k = wd + "-" + hour;
+    map.set(k, (map.get(k) || 0) + t.pnl);
+  }
+  const sel = S.filter && S.filter.kind === "heat" ? S.filter : null;
+  let html = `<div class="heat"><b></b>${hours.map((h) => `<b>${h}</b>`).join("")}`;
+  for (let wd = 0; wd < 7; wd++) {
+    html += `<b>${WEEKDAYS[wd]}</b>`;
+    for (const h of hours) {
+      const n = map.get(wd + "-" + h);
+      const cls = [n == null ? "" : n < 0 ? "bad" : "has", sel && sel.wd===wd && sel.hour===h ? "on" : ""].join(" ");
+      html += `<button class="cell ${cls}" data-act="heat" data-wd="${wd}" data-h="${h}" title="週${WEEKDAYS[wd]} ${h}時 ${n==null?"無":n}"></button>`;
+    }
+  }
+  return html + "</div>";
+}
+function groupRow(title, list) {
+  const st = statsOf(list);
+  return {
+    title, n: st.n, winrate: st.n ? st.wins / st.n : null,
+    exp: st.exp, avgW: st.avgW, avgL: st.avgL, pf: st.pf, rr: st.rr,
+    eq: INITIAL + st.pnl, pnl: st.pnl,
+  };
+}
+function fmtCell(col, v) {
+  if (col === "title") return v.title;
+  if (col === "n") return v.n;
+  if (col === "winrate") return v.winrate == null ? "—" : `${Math.round(v.winrate * 1000) / 10}%`;
+  if (col === "pf" || col === "rr") return v[col] == null ? "—" : v[col].toFixed(2);
+  if (col === "eq") return money(v.eq);
+  return money(v[col]);
+}
+function breakdown(dim, list) {
+  let rows;
+  if (dim === "all") rows = [groupRow("全部", list)];
+  else if (dim === "grade") rows = GRADES.map((g) => groupRow(g, list.filter((t) => t.grade === g)));
+  else {
+    const keys = [...new Set(list.map((t) => t[dim]))];
+    rows = keys.map((k) => groupRow(k, list.filter((t) => t[dim] === k)));
+  }
+  const col = S.sortCol, dir = S.sortDir === "asc" ? 1 : -1;
+  rows.sort((a, b) => {
+    const av = a[col], bv = b[col];
+    if (col === "title") return String(av).localeCompare(String(bv), "zh") * dir;
+    const an = av == null ? -Infinity * dir : av, bn = bv == null ? -Infinity * dir : bv;
+    return (an - bn) * dir;
+  });
+  const sel = S.filter && S.filter.kind === "break" && S.filter.dim === dim ? S.filter.key : null;
+  const heads = BCOLS.map(([k, lab]) => {
+    const mark = S.sortCol === k ? (S.sortDir === "desc" ? " ↓" : " ↑") : "";
+    return `<th class="sort" data-act="sort" data-col="${k}">${lab}${mark}</th>`;
+  }).join("");
+  const body = rows.map((v) => {
+    const click = dim === "all" ? `data-act="clear"` : `data-act="break" data-dim="${dim}" data-key="${v.title}"`;
+    const cells = BCOLS.map(([k]) => `<td>${fmtCell(k, v)}</td>`).join("");
+    return `<tr class="clickable ${sel===v.title?"picked":""}" ${click}>${cells}</tr>`;
+  }).join("");
+  return `<table class="grid"><tr>${heads}</tr>${body}</table>`;
+}
+function calendar(list) {
+  const first = new Date("2026-09-01T12:00:00");
+  const startWd = first.getDay();
+  const byDay = new Map();
+  for (const t of list) {
+    const cur = byDay.get(t.date) || { pnl: 0, n: 0 };
+    cur.pnl += t.pnl; cur.n += 1; byDay.set(t.date, cur);
+  }
+  let html = `<div class="cal">${WEEKDAYS.map((d) => `<div class="hd">${d}</div>`).join("")}`;
+  for (let i = 0; i < startWd; i++) html += "<div></div>";
+  const weekPnls = [];
+  let acc = 0, cnt = 0;
+  const flush = () => { weekPnls.push({ pnl: acc, n: cnt }); acc = 0; cnt = 0; };
+  const sel = S.overlay === "journal" ? S.date : null;
+  for (let d = 1; d <= 30; d++) {
+    const date = "2026-09-" + String(d).padStart(2, "0");
+    const cell = byDay.get(date);
+    const cls = [
+      cell ? (cell.pnl < 0 ? "down" : "up") : "",
+      sel === date ? "on" : "",
+    ].join(" ");
+    html += `<button class="day ${cls}" data-act="day" data-day="${date}">
+      <div class="n">${d}</div>
+      ${cell ? `<div class="p">${money(cell.pnl)}</div><div class="c">${cell.n} 筆</div>` : ""}
+    </button>`;
+    if (cell) { acc += cell.pnl; cnt += cell.n; }
+    if ((startWd + d - 1) % 7 === 6) flush();
+  }
+  if ((startWd + 30) % 7 !== 0) flush();
+  html += "</div>";
+  const weeks = weekPnls.map((w, i) => `<button class="week" type="button"><div class="muted">第${i+1}週</div><div>${money(w.pnl)}</div><div class="muted">${w.n} 筆</div></button>`).join("");
+  return `<div class="cal-wrap">${html}<div class="weeks">${weeks}</div></div>`;
+}
+function tradeVal(t, col) {
+  if (col === "time") return t.date + t.time;
+  return t[col];
+}
+function tradeTable(list, opts = {}) {
+  if (!list.length) return `<p class="muted">這個篩選沒有交易報告卡</p>`;
+  const sortable = opts.sortable !== false;
+  const rows = list.slice();
+  if (sortable) {
+    const col = S.tradeSortCol, dir = S.tradeSortDir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      const av = tradeVal(a, col), bv = tradeVal(b, col);
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv), "zh") * dir;
+    });
+  } else {
+    rows.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  }
+  const heads = TCOLS.map(([k, lab]) => {
+    if (!sortable) return `<th>${lab}</th>`;
+    const mark = S.tradeSortCol === k ? (S.tradeSortDir === "desc" ? " ↓" : " ↑") : "";
+    return `<th class="sort" data-act="tsort" data-col="${k}">${lab}${mark}</th>`;
+  }).join("");
+  return `<div class="scroll"><table class="grid">
+    <tr>${heads}</tr>
+    ${rows.map((t) => `<tr class="clickable" data-act="trade" data-trade="${t.id}">
+      <td>${t.date} ${t.time}</td><td>${t.account}</td><td>${t.product}</td><td>${t.setup}</td>
+      <td>${t.side}</td><td>${t.size}</td><td>${t.grade}</td><td>${t.exec}</td><td>${money(t.pnl)}</td>
+    </tr>`).join("")}
+  </table></div>`;
+}
+function fields(rows) {
+  return `<dl class="fields">${rows.map(([k,v]) => `<div><dt>${k}</dt><dd>${v || "—"}</dd></div>`).join("")}</dl>`;
+}
+function journalSheet(date, list) {
+  const j = JOURNALS[date] || {};
+  const ts = tradesOn(date, list);
+  const ps = PSYCHS.filter((p) => p.date === date && !p.tradeId);
+  return `<h2>當日日誌 · 美東 ${date}</h2>
+    ${fields([["當日背景", j.bg],["風險上限（美元）", j.risk],["今天只做哪些 setup", j.setups],["一句計畫", j.plan],["做得好的一件", j.good],["明天只改一件", j.change]])}
+    <h3 style="margin:16px 0 8px">當天交易報告卡</h3>${tradeTable(ts, { sortable: false })}
+    <h3 style="margin:16px 0 8px">綁當天的心理遊戲</h3>
+    ${ps.length ? ps.map((p) => `<p><button class="ghost" data-act="psych" data-psych="${p.id}">${p.type} ${p.intensity}/10</button></p>`).join("") : `<p class="muted">沒有</p>`}
+    <p class="row" style="margin-top:12px"><button class="ghost" data-act="close">關閉</button></p>`;
+}
+function tradeSheet(t) {
+  const ps = PSYCHS.filter((p) => p.tradeId === t.id);
+  return `<h2>交易報告卡</h2>
+    ${fields([["美東時間", t.date+" "+t.time],["帳戶", t.account],["商品", t.product],["setup 標", t.setup],["方向", t.side],["口數", t.size],["成績（你打的）", t.grade],["執行評等（你打的）", t.exec],["平倉損益", money(t.pnl)],["進場價",""],["出場價",""],["停損",""],["計畫風險",""]])}
+    <p class="note">成績 A–D 不是從損益算出來的。賺的也可以打 D，虧的也可以打 A。</p>
+    <h3 style="margin:16px 0 8px">心理遊戲</h3>
+    ${ps.length ? ps.map((p) => `<p><button class="ghost" data-act="psych" data-psych="${p.id}">${p.type} ${p.intensity}/10 · ${p.note}</button></p>`).join("") : `<p class="muted">沒有</p>`}
+    <p class="row" style="margin-top:12px"><button class="ghost" data-act="day" data-day="${t.date}">當天日誌</button><button class="ghost" data-act="close">關閉</button></p>`;
+}
+function psychSheet(p) {
+  const t = p.tradeId ? tradeById(p.tradeId) : null;
+  return `<h2>心理遊戲</h2>
+    ${fields([["類型", p.type],["強度", p.intensity+" / 10"],["日期", p.date],["綁", t ? "交易報告卡" : "當天"],["一句", p.note]])}
+    <p class="row" style="margin-top:12px">
+      ${t ? `<button class="primary" data-act="trade" data-trade="${t.id}">打開報告卡</button>` : `<button class="primary" data-act="day" data-day="${p.date}">打開當天日誌</button>`}
+      <button class="ghost" data-act="close">關閉</button>
+    </p>`;
+}
+function psychBook() {
+  return `<div class="panel"><h2>心理戰</h2>
+    <table class="grid"><tr><th>日期</th><th>類型</th><th>強度</th><th>綁</th><th>一句</th></tr>
+    ${PSYCHS.map((p) => `<tr class="clickable" data-act="psych" data-psych="${p.id}"><td>${p.date}</td><td>${p.type}</td><td>${p.intensity}</td><td>${p.tradeId?"報告卡":"當天"}</td><td>${p.note}</td></tr>`).join("")}
+    </table></div>`;
+}
+
+function renderMain() {
+  const all = TRADES;
+  const list = trio();
+  const st = statsOf(all);
+  const heroes = `
+    <div class="heroes">
+      <div class="hero"><div class="l">目前權益</div><div class="v">${money(INITIAL + st.pnl)}</div><div class="s">初始資金 ${INITIAL}</div></div>
+      <div class="hero"><div class="l">累積損益</div><div class="v">${money(st.pnl)}</div></div>
+      <div class="hero"><div class="l">勝率</div><div class="v">${st.n ? (Math.round(st.wins/st.n*1000)/10) : "—"}%</div><div class="s">${st.wins} 勝 / ${st.losses} 敗</div></div>
+      <div class="hero"><div class="l">賺賠比</div><div class="v">${st.pf ? st.pf.toFixed(2) : "—"}</div><div class="s">總賺÷|總賠|</div></div>
+      <div class="hero"><div class="l">風報比</div><div class="v">${st.rr ? st.rr.toFixed(2) : "—"}</div><div class="s">平均賺 ${money(st.avgW)} / 平均賠 ${money(st.avgL)}</div></div>
+      <div class="hero"><div class="l">筆數</div><div class="v">${st.n}</div></div>
+    </div>`;
+  const pts = dayPoints(all);
+  const tip = S.hover != null && pts[S.hover] ? (() => {
+    const p = pts[S.hover];
+    return `<div class="tip on" id="tip"><b>${p.date}</b>權益 ${money(p.eq)}<br>當日損益 ${money(p.pnl)}<br>當日 ${p.n} 筆 · 勝 ${p.wins}</div>`;
+  })() : `<div class="tip" id="tip"></div>`;
+  const heatSrc = S.filter && S.filter.kind === "heat" ? all : list;
+  const breakSrc = (S.dim === "all" || (S.filter && S.filter.kind === "break" && S.filter.dim === S.dim)) ? all : list;
+  return `
+    ${heroes}
+    <div class="split">
+      <div class="panel chart">
+        <h2>權益線 · 滑過看那天，點進去當日日誌</h2>
+        ${curveSvg(all)}${tip}
+      </div>
+      <div class="panel">
+        <h2>統計</h2>
+        <div class="stats">
+          <div><span class="l">期望值</span><span>${money(st.exp)}</span></div>
+          <div><span class="l">平均賺</span><span>${money(st.avgW)}</span></div>
+          <div><span class="l">平均賠</span><span>${money(st.avgL)}</span></div>
+          <div><span class="l">最大單筆賺</span><span>${money(st.maxW)}</span></div>
+          <div><span class="l">最大單筆賠</span><span>${money(st.maxL)}</span></div>
+          <div><span class="l">總手續費</span><span>${st.fee}</span></div>
+        </div>
+        <p class="muted" style="margin:8px 0 0">風報比在上面大卡。月曆／曲線不跟下面三件聯動。</p>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="row" style="justify-content:space-between"><h2>2026-09 損益月曆</h2><span class="muted">獨立。點一天只開當日日誌，不改熱力圖或交易表</span></div>
+      ${calendar(all)}
+    </div>
+    <div class="panel">
+      <h2>這三件聯動：分解表 · 時段熱力圖 · 交易報告卡</h2>
+      <p class="note">點分解表或熱力圖，另外兩件跟著變。月曆不會動。</p>
+      <p class="row">${Object.keys(DIMS).map((d) => `<button class="chip ${S.dim===d?"on":""}" data-act="dim" data-dim="${d}">${DIMS[d]}</button>`).join("")}
+        ${S.filter ? `<button class="ghost" data-act="clear">清除這三件的篩選</button>` : ""}
+      </p>
+      ${S.dim === "grade" ? `<p class="note">成績是你打的 A B C D，不是系統算的。點欄名可排序。</p>` : `<p class="muted">點欄名可排序（預設累積權益大→小）。點列會聯動熱力圖與交易表。</p>`}
+      ${breakdown(S.dim, breakSrc)}
+      <p class="muted" style="margin:10px 0 4px">時段熱力圖（星期×小時）</p>
+      ${heatGrid(heatSrc)}
+      <h3 style="margin:16px 0 8px">交易報告卡 · ${list.length} 筆</h3>
+      <p class="muted">點欄名排序。點一列打開報告卡欄位。</p>
+      ${tradeTable(list)}
+    </div>`;
+}
+
+function render() {
+  S.variant = "F";
+  const overlay = S.overlay === "journal" ? `<div class="overlay"><div class="sheet">${journalSheet(S.date, TRADES)}</div></div>`
+    : S.overlay === "trade" ? `<div class="overlay"><div class="sheet">${tradeSheet(tradeById(S.tradeId))}</div></div>`
+    : S.overlay === "psych" ? `<div class="overlay"><div class="sheet">${psychSheet(PSYCHS.find((p) => p.id === S.psychId))}</div></div>`
+    : "";
+  document.getElementById("app").innerHTML = `
+    <div class="topbar">
+      <nav class="tabs">
+        <button class="${S.screen==="cmd"?"on":""}" data-act="tab" data-tab="cmd">指揮中心</button>
+        <button class="${S.screen==="psychs"?"on":""}" data-act="tab" data-tab="psychs">心理戰</button>
+      </nav>
+      <select class="filter" disabled><option>主帳戶</option></select>
+      <span class="muted">月曆獨立 · 分解表／時段／交易表聯動</span>
+    </div>
+    <p class="walk-q">${DESCS[S.variant]}</p>
+    <div class="col">${S.screen==="psychs" ? psychBook() : renderMain()}</div>${overlay}`;
+  document.getElementById("state").textContent =
+    `variant=${S.variant} filter=${S.filter?JSON.stringify(S.filter):"—"} hover=${S.hover??"—"} overlay=${S.overlay||"—"}`;
+  document.getElementById("switcher").innerHTML = `<div class="label">F（月曆獨立 · 三件聯動）</div>`;
+  placeTip();
+}
+function placeTip() {
+  const tip = document.getElementById("tip");
+  const dot = document.querySelector(`.cdot[data-i="${S.hover}"]`);
+  if (!tip || !dot || S.hover == null) return;
+  const c = document.querySelector(".chart");
+  const r = dot.getBoundingClientRect();
+  const p = c.getBoundingClientRect();
+  tip.style.left = Math.min(r.left - p.left + 12, p.width - 180) + "px";
+  tip.style.top = Math.max(8, r.top - p.top - 88) + "px";
+}
+
+document.getElementById("app").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  const act = b.getAttribute("data-act");
+  if (act === "tab") go({ screen: b.getAttribute("data-tab"), overlay: null });
+  if (act === "day") go({ date: b.getAttribute("data-day"), overlay: "journal" });
+  if (act === "trade") go({ tradeId: b.getAttribute("data-trade"), overlay: "trade" });
+  if (act === "psych") go({ psychId: b.getAttribute("data-psych"), overlay: "psych" });
+  if (act === "heat") go({ filter: { kind:"heat", wd: Number(b.dataset.wd), hour: Number(b.dataset.h) }, overlay: null });
+  if (act === "break") go({ filter: { kind:"break", dim: b.dataset.dim, key: b.dataset.key }, overlay: null });
+  if (act === "dim") {
+    const dim = b.dataset.dim;
+    const keepHeat = S.filter && S.filter.kind === "heat" ? S.filter : null;
+    go({ dim, filter: dim === "all" ? keepHeat : (S.filter && S.filter.kind === "break" && S.filter.dim !== dim ? keepHeat : S.filter) });
+  }
+  if (act === "sort") {
+    const col = b.dataset.col;
+    go({ sortCol: col, sortDir: S.sortCol === col && S.sortDir === "desc" ? "asc" : "desc" });
+  }
+  if (act === "tsort") {
+    const col = b.dataset.col;
+    go({ tradeSortCol: col, tradeSortDir: S.tradeSortCol === col && S.tradeSortDir === "desc" ? "asc" : "desc" });
+  }
+  if (act === "clear") go({ filter: null, dim: S.dim === "all" ? "all" : S.dim });
+  if (act === "close") go({ overlay: null });
+  if (act === "curve") {
+    const i = Number(b.dataset.i);
+    const pt = dayPoints(TRADES)[i];
+    if (!pt) return;
+    go({ hover: i, date: pt.date, overlay: "journal" });
+  }
+});
+document.getElementById("app").addEventListener("pointerover", (e) => {
+  const b = e.target.closest(".cdot");
+  if (!b) return;
+  S.hover = Number(b.dataset.i);
+  render();
+});
+document.getElementById("switcher").innerHTML = `<div class="label">F（月曆獨立 · 三件聯動）</div>`;
+render();
+</script>
+</body>
+</html>
