@@ -10,3 +10,6 @@ published/
 .env.*
 !.env.example
 _secrets/
+
+# worktree：同一座第二個對話用 `claude -w`，官方預設建在這裡（座位基準票 02）
+.claude/worktrees/
