@@ -1,2 +1,12 @@
 published/
 .DS_Store
+
+# ── 密鑰不進版本（2026-09-21，研究票 01 第 2 步）──
+# 十一座統一同一組規則，驗收用 `git check-ignore` 不是讀檔。
+# 動機：推上遠端之前要確定 .env 這類檔不可能誤入歷史 ——
+# 這個帳號的 user-owned private repo **沒有** secret scanning 也沒有 push protection
+# （官方文件：只在 GHEC+EMU / GHES 才有），掃描責任 100% 在本機。
+.env
+.env.*
+!.env.example
+_secrets/
